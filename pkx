@@ -286,7 +286,13 @@ build_zypper() {
         search)  NATIVE="zypper search $pk" ;;
         info)    NATIVE="zypper info $pk" ;;
         refresh) NATIVE="${E}zypper refresh" ;;
-        upgrade) NATIVE="${E}zypper refresh && ${E}zypper$y update" ;;
+        upgrade)
+            # Rolling Tumbleweed needs `zypper dup`; Leap/SLES use `update`.
+            if grep -qi tumbleweed /etc/os-release 2>/dev/null; then
+                NATIVE="${E}zypper refresh && ${E}zypper$y dist-upgrade"
+            else
+                NATIVE="${E}zypper refresh && ${E}zypper$y update"
+            fi ;;
         list)    NATIVE="zypper search --installed-only" ;;
         orphans) UNSUP="zypper has no autoremove; remove a package with its deps via 'zypper remove --clean-deps <pkg>'" ;;
         clean)   NATIVE="${E}zypper clean --all" ;;
