@@ -8,10 +8,22 @@ on:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    env:
+      # Pinned: the distro's shellcheck varies by runner image, and the code
+      # for "function is only invoked indirectly" changed across versions
+      # (SC2317 -> SC2329), so an unpinned version makes the disable
+      # directives in pkx version-dependent.
+      SHELLCHECK_VERSION: v0.11.0
     steps:
       - uses: actions/checkout@v4
-      - name: Install linters
-        run: sudo apt-get update && sudo apt-get install -y shellcheck devscripts
+      - name: Install shellcheck ${{ env.SHELLCHECK_VERSION }}
+        run: |
+          curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" \
+            | tar -xJf -
+          sudo install "shellcheck-${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          shellcheck --version
+      - name: Install checkbashisms
+        run: sudo apt-get update && sudo apt-get install -y devscripts
       - name: shellcheck (POSIX sh)
         run: shellcheck --shell=sh pkx tests/test_dryrun.sh
       - name: checkbashisms

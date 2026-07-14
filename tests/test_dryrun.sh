@@ -292,7 +292,7 @@ ok apt "sudo apt-get install 'a b' c"        install "a b" c
 
 # --- PKX_SUDO override ------------------------------------------------------
 # shellcheck disable=SC2086  # PKX_SH is intentionally word-split
-got=$(PKX_MANAGER=apt PKX_SUDO= $PKX_SH "$PKX" -n install foo 2>&1); rc=$?
+got=$(PKX_MANAGER=apt PKX_SUDO='' $PKX_SH "$PKX" -n install foo 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && [ "$got" = "apt-get install foo" ]; then
     pass=$((pass + 1))
 else
