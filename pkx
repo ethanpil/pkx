@@ -42,7 +42,9 @@ shquote() {
     for _a in "$@"; do
         case $_a in
             ""|*[!A-Za-z0-9._@/:+-]*)
-                _e=$(printf '%s' "$_a" | sed "s/'/'\\\\''/g")
+                # append a sentinel before capturing so $(...) can't strip a
+                # trailing newline from the operand, then remove it
+                _e=$(printf '%sX' "$_a" | sed "s/'/'\\\\''/g"); _e=${_e%X}
                 pk="$pk '$_e'" ;;
             *)
                 pk="$pk $_a" ;;
@@ -89,8 +91,9 @@ Flags:
   -h, --help         Show this help
   -V, --version      Show version
 
-Flags must come before the command. Use -- to end flag parsing when an
-operand starts with '-' (e.g. pkx remove -- -somepkg).
+Flags may appear anywhere on the command line. Use -- so that a following
+token beginning with '-' is treated as an operand instead of a flag; the
+native tool still receives it verbatim, so the tool must accept such a name.
 
 Environment:
   PKX_MANAGER        Same as --via
@@ -257,7 +260,7 @@ build_pacman() {
         refresh) UNSUP="bare 'pacman -Sy' risks a partial upgrade that can break Arch; use 'pkx upgrade' (-Syu) instead" ;;
         upgrade) NATIVE="${E}pacman -Syu$y" ;;
         list)    NATIVE="pacman -Q" ;;
-        orphans) NATIVE="orphans=\$(pacman -Qdtq); [ -z \"\$orphans\" ] && echo 'pkx: no orphaned packages to remove' || ${E}pacman -Rns$y \$orphans" ;;
+        orphans) NATIVE="if orphans=\$(pacman -Qdtq); then ${E}pacman -Rns$y \$orphans; else echo 'pkx: no orphaned packages to remove'; fi" ;;
         clean)   NATIVE="${E}pacman -Sc$y" ;;
         owns)    NATIVE="pacman -Qo $pk" ;;
         files)   NATIVE="pacman -Ql $pk" ;;
@@ -276,7 +279,14 @@ build_apk() {
         upgrade) NATIVE="${E}apk update && ${E}apk upgrade" ;;
         list)    NATIVE="apk info" ;;
         orphans) UNSUP="apk removes unneeded dependencies automatically when you 'pkx remove' a package" ;;
-        clean)   NATIVE="${E}apk cache clean 2>/dev/null || echo 'pkx: apk cache is not enabled; nothing to clean'" ;;
+        clean)
+            # Decide at build time so a real failure isn't hidden and sudo's
+            # prompt isn't swallowed: only clean when a cache is configured.
+            if [ -e /etc/apk/cache ]; then
+                NATIVE="${E}apk cache clean"
+            else
+                NATIVE="echo 'pkx: apk cache is not enabled; nothing to clean'"
+            fi ;;
         owns)    NATIVE="apk info --who-owns $pk" ;;
         files)   NATIVE="apk info -L $pk" ;;
         raw)     NATIVE="apk $pk" ;;
@@ -336,11 +346,11 @@ build_emerge() {
         info)    NATIVE="emerge --pretend --verbose $pk" ;;
         refresh) NATIVE="${E}emerge --sync" ;;
         upgrade) NATIVE="${E}emerge --sync && ${E}emerge --update --deep --newuse @world" ;;
-        list)    NATIVE="qlist -Iv" ;;
+        list)    NATIVE="qlist -Iv"; REQ=qlist ;;
         orphans) NATIVE="${E}emerge --depclean" ;;
-        clean)   NATIVE="${E}eclean-dist" ;;
-        owns)    NATIVE="qfile $pk" ;;
-        files)   NATIVE="qlist $pk" ;;
+        clean)   NATIVE="${E}eclean-dist"; REQ=eclean-dist ;;
+        owns)    NATIVE="qfile $pk"; REQ=qfile ;;
+        files)   NATIVE="qlist $pk"; REQ=qlist ;;
         raw)     NATIVE="emerge $pk" ;;
     esac
 }
@@ -387,7 +397,7 @@ build_pkg() {
         install) NATIVE="${E}pkg install$y $pk" ;;
         remove)  NATIVE="${E}pkg delete$y $pk" ;;
         search)  NATIVE="pkg search $pk" ;;
-        info)    NATIVE="pkg info $pk" ;;
+        info)    NATIVE="pkg search -f $pk" ;;
         refresh) NATIVE="${E}pkg update" ;;
         upgrade) NATIVE="${E}pkg upgrade$y" ;;
         list)    NATIVE="pkg info" ;;
@@ -407,7 +417,7 @@ build_pkg_add() {
         install) NATIVE="${E}pkg_add $pk" ;;
         remove)  NATIVE="${E}pkg_delete $pk" ;;
         search)  NATIVE="pkg_info -Q $pk" ;;
-        info)    NATIVE="pkg_info $pk" ;;
+        info)    NATIVE="pkg_info -Q $pk" ;;
         refresh) UNSUP="OpenBSD has no separate index refresh; pkg_add always queries the mirrors" ;;
         upgrade) NATIVE="${E}pkg_add -u" ;;
         list)    NATIVE="pkg_info" ;;
@@ -445,6 +455,13 @@ build() {
     if needs_root "$1" && [ -n "$SUDO" ]; then
         E="$SUDO "
     fi
+    # REQ is the executable this verb needs; default to the manager's primary
+    # binary. Builders that shell out to a different tool override it.
+    case "$MGR" in
+        apt)  REQ=apt-get ;;
+        xbps) REQ=xbps-install ;;
+        *)    REQ=$MGR ;;
+    esac
     "build_$MGR" "$1"
 }
 
@@ -455,7 +472,9 @@ build() {
 show_which() {
     printf 'pkx %s\n' "$PKX_VERSION"
     printf 'manager:    %s (%s)\n' "$MGR" "$MGR_SOURCE"
-    if [ -n "$SUDO" ]; then
+    if [ "$MGR" = brew ]; then
+        printf 'escalation: none (Homebrew never runs as root)\n'
+    elif [ -n "$SUDO" ]; then
         printf 'escalation: %s\n' "$SUDO"
     elif [ "$ROOT" = 1 ]; then
         printf 'escalation: none (running as root)\n'
@@ -601,20 +620,13 @@ if [ "$DRYRUN" = 1 ]; then
     exit 0
 fi
 
-# Verify the command's leading binary exists, so verbs that shell out to
-# helper tools (e.g. Gentoo qlist/qfile/eclean-dist) fail cleanly instead of
+# Verify the tool this verb needs is installed, so verbs that shell out to a
+# helper tool (e.g. Gentoo qlist/qfile/eclean-dist) fail cleanly instead of
 # with a raw 127 after the teaching line has already printed.
-checkbin=$NATIVE
-[ -n "$SUDO" ] && checkbin=${checkbin#"$SUDO "}
-checkbin=${checkbin%% *}
-case $checkbin in
-    *=*) : ;;  # compound starting with a variable assignment (pacman orphans)
-    *)
-        if ! has "$checkbin"; then
-            warn "manager '$MGR' needs '$checkbin', which is not installed"
-            exit 1
-        fi ;;
-esac
+if ! has "$REQ"; then
+    warn "manager '$MGR' needs '$REQ', which is not installed"
+    exit 1
+fi
 
 if needs_root "$verb" && [ "$ROOT" = 0 ] && [ -z "$SUDO" ]; then
     warn "warning: not running as root and no sudo/doas found; trying anyway"

@@ -115,7 +115,7 @@ no pacman refresh
 ok pacman "sudo pacman -Syu"                                     upgrade
 ok pacman "sudo pacman -Syu --noconfirm"                         upgrade -y
 ok pacman "pacman -Q"                                            list
-ok pacman "orphans=\$(pacman -Qdtq); [ -z \"\$orphans\" ] && echo 'pkx: no orphaned packages to remove' || sudo pacman -Rns \$orphans" orphans
+ok pacman "if orphans=\$(pacman -Qdtq); then sudo pacman -Rns \$orphans; else echo 'pkx: no orphaned packages to remove'; fi" orphans
 ok pacman "sudo pacman -Sc"                                      clean
 ok pacman "pacman -Qo /bin/ls"                                   owns /bin/ls
 ok pacman "pacman -Ql foo"                                       files foo
@@ -130,7 +130,7 @@ ok apk "sudo apk update"                                         refresh
 ok apk "sudo apk update && sudo apk upgrade"                     upgrade
 ok apk "apk info"                                                list
 no apk orphans
-ok apk "sudo apk cache clean 2>/dev/null || echo 'pkx: apk cache is not enabled; nothing to clean'" clean
+ok apk "echo 'pkx: apk cache is not enabled; nothing to clean'" clean
 ok apk "apk info --who-owns /bin/ls"                             owns /bin/ls
 ok apk "apk info -L foo"                                         files foo
 
@@ -208,7 +208,7 @@ ok pkg "sudo pkg install foo"                                    install foo
 ok pkg "sudo pkg install -y foo"                                 install -y foo
 ok pkg "sudo pkg delete foo"                                     remove foo
 ok pkg "pkg search foo"                                          search foo
-ok pkg "pkg info foo"                                            info foo
+ok pkg "pkg search -f foo"                                       info foo
 ok pkg "sudo pkg update"                                         refresh
 ok pkg "sudo pkg upgrade"                                        upgrade
 ok pkg "pkg info"                                                list
@@ -222,7 +222,7 @@ ok pkg_add "sudo pkg_add foo"                                    install foo
 ok pkg_add "sudo pkg_add foo"                                    install -y foo
 ok pkg_add "sudo pkg_delete foo"                                 remove foo
 ok pkg_add "pkg_info -Q foo"                                     search foo
-ok pkg_add "pkg_info foo"                                        info foo
+ok pkg_add "pkg_info -Q foo"                                     info foo
 no pkg_add refresh
 ok pkg_add "sudo pkg_add -u"                                     upgrade
 ok pkg_add "pkg_info"                                            list
