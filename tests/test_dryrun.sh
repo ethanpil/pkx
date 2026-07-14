@@ -116,7 +116,7 @@ ok pacman "sudo pacman -Syu"                                     upgrade
 ok pacman "sudo pacman -Syu --noconfirm"                         upgrade -y
 ok pacman "pacman -Q"                                            list
 ok pacman "orphans=\$(pacman -Qdtq); [ -z \"\$orphans\" ] && echo 'pkx: no orphaned packages to remove' || sudo pacman -Rns \$orphans" orphans
-ok pacman "sudo pacman -Scc"                                     clean
+ok pacman "sudo pacman -Sc"                                      clean
 ok pacman "pacman -Qo /bin/ls"                                   owns /bin/ls
 ok pacman "pacman -Ql foo"                                       files foo
 ok pacman "pacman -Syu"                                          raw -- -Syu

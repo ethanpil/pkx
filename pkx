@@ -253,7 +253,7 @@ build_pacman() {
         upgrade) NATIVE="${E}pacman -Syu$y" ;;
         list)    NATIVE="pacman -Q" ;;
         orphans) NATIVE="orphans=\$(pacman -Qdtq); [ -z \"\$orphans\" ] && echo 'pkx: no orphaned packages to remove' || ${E}pacman -Rns$y \$orphans" ;;
-        clean)   NATIVE="${E}pacman -Scc$y" ;;
+        clean)   NATIVE="${E}pacman -Sc$y" ;;
         owns)    NATIVE="pacman -Qo $pk" ;;
         files)   NATIVE="pacman -Ql $pk" ;;
         raw)     NATIVE="pacman $pk" ;;
