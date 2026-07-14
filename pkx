@@ -372,7 +372,7 @@ build_port() {
         upgrade) NATIVE="${E}port selfupdate && ${E}port$y upgrade outdated" ;;
         list)    NATIVE="port installed" ;;
         orphans) NATIVE="${E}port$y uninstall leaves" ;;
-        clean)   NATIVE="${E}port reclaim" ;;
+        clean)   NATIVE="${E}port clean --all installed" ;;
         owns)    NATIVE="port provides $pk" ;;
         files)   NATIVE="port contents $pk" ;;
         raw)     NATIVE="port $pk" ;;

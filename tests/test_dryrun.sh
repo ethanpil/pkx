@@ -199,7 +199,7 @@ ok port "sudo port sync"                                         refresh
 ok port "sudo port selfupdate && sudo port upgrade outdated"     upgrade
 ok port "port installed"                                         list
 ok port "sudo port uninstall leaves"                             orphans
-ok port "sudo port reclaim"                                      clean
+ok port "sudo port clean --all installed"                        clean
 ok port "port provides /bin/ls"                                  owns /bin/ls
 ok port "port contents foo"                                      files foo
 
