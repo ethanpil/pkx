@@ -329,7 +329,7 @@ build_emerge() {
     # gentoolkit (eclean-dist). Both are standard Gentoo admin tools.
     case "$1" in
         install) NATIVE="${E}emerge $pk" ;;
-        remove)  NATIVE="${E}emerge --deselect $pk && ${E}emerge --depclean" ;;
+        remove)  NATIVE="${E}emerge --deselect $pk && ${E}emerge --depclean $pk" ;;
         search)  NATIVE="emerge --search $pk" ;;
         info)    NATIVE="emerge --info $pk" ;;
         refresh) NATIVE="${E}emerge --sync" ;;

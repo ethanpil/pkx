@@ -165,7 +165,7 @@ no xbps raw -- foo
 
 # --- emerge ----------------------------------------------------------------
 ok emerge "sudo emerge foo"                                      install foo
-ok emerge "sudo emerge --deselect foo && sudo emerge --depclean" remove foo
+ok emerge "sudo emerge --deselect foo && sudo emerge --depclean foo" remove foo
 ok emerge "emerge --search foo"                                  search foo
 ok emerge "emerge --info foo"                                    info foo
 ok emerge "sudo emerge --sync"                                   refresh
