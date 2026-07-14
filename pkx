@@ -261,7 +261,7 @@ build_pacman() {
         refresh) UNSUP="bare 'pacman -Sy' risks a partial upgrade that can break Arch; use 'pkx upgrade' (-Syu) instead" ;;
         upgrade) NATIVE="${E}pacman -Syu$y" ;;
         list)    NATIVE="pacman -Q" ;;
-        orphans) NATIVE="pacman -Qdtq | ${E}pacman -Rns$y -" ;;
+        orphans) NATIVE="orphans=\$(pacman -Qdtq); [ -z \"\$orphans\" ] && echo 'pkx: no orphaned packages to remove' || ${E}pacman -Rns$y \$orphans" ;;
         clean)   NATIVE="${E}pacman -Scc$y" ;;
         owns)    NATIVE="pacman -Qo $pk" ;;
         files)   NATIVE="pacman -Ql $pk" ;;
