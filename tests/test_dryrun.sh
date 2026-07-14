@@ -130,7 +130,7 @@ ok apk "sudo apk update"                                         refresh
 ok apk "sudo apk update && sudo apk upgrade"                     upgrade
 ok apk "apk info"                                                list
 no apk orphans
-ok apk "sudo apk cache clean"                                    clean
+ok apk "sudo apk cache clean 2>/dev/null || echo 'pkx: apk cache is not enabled; nothing to clean'" clean
 ok apk "apk info --who-owns /bin/ls"                             owns /bin/ls
 ok apk "apk info -L foo"                                         files foo
 

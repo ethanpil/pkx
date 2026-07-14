@@ -271,7 +271,7 @@ build_apk() {
         upgrade) NATIVE="${E}apk update && ${E}apk upgrade" ;;
         list)    NATIVE="apk info" ;;
         orphans) UNSUP="apk removes unneeded dependencies automatically when you 'pkx remove' a package" ;;
-        clean)   NATIVE="${E}apk cache clean" ;;
+        clean)   NATIVE="${E}apk cache clean 2>/dev/null || echo 'pkx: apk cache is not enabled; nothing to clean'" ;;
         owns)    NATIVE="apk info --who-owns $pk" ;;
         files)   NATIVE="apk info -L $pk" ;;
         raw)     NATIVE="apk $pk" ;;
