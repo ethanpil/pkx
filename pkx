@@ -19,7 +19,7 @@
 #     with an explanation instead of silently approximating.
 #   - The native tool's exit code passes through untouched.
 #
-# https://github.com/ethanpil/pax
+# https://github.com/ethanpil/pkx
 
 PKX_VERSION="0.2.0"
 SUPPORTED_MGRS="apt dnf yum pacman apk zypper xbps emerge brew port pkg pkg_add pkgin"

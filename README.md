@@ -39,14 +39,14 @@ teaches you the actual command for the box you're on.
 One file, no dependencies:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/ethanpil/pax/main/pkx -o /usr/local/bin/pkx
+curl -fsSL https://raw.githubusercontent.com/ethanpil/pkx/main/pkx -o /usr/local/bin/pkx
 chmod +x /usr/local/bin/pkx
 ```
 
 or with wget:
 
 ```sh
-wget -qO /usr/local/bin/pkx https://raw.githubusercontent.com/ethanpil/pax/main/pkx
+wget -qO /usr/local/bin/pkx https://raw.githubusercontent.com/ethanpil/pkx/main/pkx
 chmod +x /usr/local/bin/pkx
 ```
 
