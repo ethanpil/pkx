@@ -259,6 +259,14 @@ ok apt "sudo apt-get install -y foo"                             -y install foo
 ok pacman "sudo pacman -S foo"                                   --via pacman install foo
 ok pacman "sudo pacman -S foo"                                   --via=arch install foo
 
+# --- operand quoting (safe eval) -------------------------------------------
+ok apt "apt-cache show 'perl(URI)'"          info "perl(URI)"
+ok apk "sudo apk add 'foo>=1.0'"             install "foo>=1.0"
+ok apt "dpkg -S '/Applications/My App/bin'"  owns "/Applications/My App/bin"
+ok apt "sudo apt-get install 'a; reboot'"    install "a; reboot"
+ok apt "sudo apt-get install foo bar"        install foo bar
+ok apt "sudo apt-get install 'a b' c"        install "a b" c
+
 # --- PKX_SUDO override ------------------------------------------------------
 # shellcheck disable=SC2086  # PKX_SH is intentionally word-split
 got=$(PKX_MANAGER=apt PKX_SUDO= $PKX_SH "$PKX" -n install foo 2>&1); rc=$?

@@ -30,6 +30,26 @@ has() { command -v "$1" >/dev/null 2>&1; }
 
 warn() { printf 'pkx: %s\n' "$*" >&2; }
 
+# Shell-quote the operands into $pk so `eval "$NATIVE"` treats each argument
+# literally — no word-splitting, no glob expansion, no command injection, and
+# whitespace or metacharacters (spaces in paths, version specs like 'foo>=1',
+# rpm capabilities like 'perl(URI)') survive intact. Operands made only of
+# safe characters are left bare so teaching-mode output stays readable;
+# anything else is single-quoted with embedded single quotes escaped.
+shquote() {
+    pk=""
+    for _a in "$@"; do
+        case $_a in
+            ""|*[!A-Za-z0-9._@/:+-]*)
+                _e=$(printf '%s' "$_a" | sed "s/'/'\\\\''/g")
+                pk="$pk '$_e'" ;;
+            *)
+                pk="$pk $_a" ;;
+        esac
+    done
+    pk=${pk# }
+}
+
 usage_err() {
     warn "$*"
     warn "run 'pkx help' for usage"
@@ -170,7 +190,7 @@ needs_root() {
 # command builders
 #
 # Each builder receives the verb in $1 and uses:
-#   $pk  - the package/file arguments, joined with spaces
+#   $pk  - the package/file operands, shell-quoted for safe eval (see shquote)
 #   $E   - escalation prefix, "sudo " or "" (already spaced)
 #   $YES - 1 if -y/--yes was given
 # It sets NATIVE to the native command string, or leaves NATIVE empty
@@ -558,7 +578,7 @@ if [ "$verb" = which ]; then
     exit 0
 fi
 
-pk="$*"
+shquote "$@"
 
 # ---------------------------------------------------------------------------
 # build and run
