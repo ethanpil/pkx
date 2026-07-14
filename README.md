@@ -102,20 +102,21 @@ installed still gets `dnf`. Override any time with `--via <mgr>` or the
 
 ## Verb reference
 
-What each verb runs, per manager. This table is the contract — the test suite
-asserts every cell.
+What each verb runs, per manager (abbreviated — the `sudo`/`doas` prefix and
+some flags are omitted for readability). The test suite asserts the exact
+command for every one of these mappings.
 
 | verb | apt | dnf | pacman | apk | zypper | brew |
 |---|---|---|---|---|---|---|
 | `install` | `apt-get install` | `dnf install` | `pacman -S` | `apk add` | `zypper install` | `brew install` |
 | `remove` | `apt-get remove` | `dnf remove` | `pacman -Rns` | `apk del` | `zypper remove` | `brew uninstall` |
 | `search` | `apt-cache search` | `dnf search` | `pacman -Ss` | `apk search` | `zypper search` | `brew search` |
-| `info` | `apt-cache show` | `dnf info` | `pacman -Si` | `apk info` | `zypper info` | `brew info` |
+| `info` | `apt-cache show` | `dnf info` | `pacman -Si` | `apk search -e -v` | `zypper info` | `brew info` |
 | `refresh` | `apt-get update` | `dnf makecache` | *refused*¹ | `apk update` | `zypper refresh` | `brew update` |
 | `upgrade` | `update && dist-upgrade` | `dnf upgrade --refresh` | `pacman -Syu` | `update && upgrade` | `refresh && update` | `update && upgrade` |
-| `list` | `dpkg --get-selections` | `rpm -qa` | `pacman -Q` | `apk info` | `zypper search -i` | `brew list --versions` |
-| `orphans` | `apt-get autoremove` | `dnf autoremove` | `-Qdtq \| -Rns -` | *n/a*² | *n/a*² | `brew autoremove` |
-| `clean` | `apt-get clean` | `dnf clean all` | `pacman -Scc` | `apk cache clean` | `zypper clean --all` | `brew cleanup` |
+| `list` | `dpkg --get-selections` | `rpm -qa` | `pacman -Q` | `apk info` | `zypper search --installed-only` | `brew list --versions` |
+| `orphans` | `apt-get autoremove` | `dnf autoremove` | `-Rns $(pacman -Qdtq)`³ | *n/a*² | *n/a*² | `brew autoremove` |
+| `clean` | `apt-get clean` | `dnf clean all` | `pacman -Sc` | `apk cache clean` | `zypper clean --all` | `brew cleanup` |
 | `owns` | `dpkg -S` | `rpm -qf` | `pacman -Qo` | `apk info --who-owns` | `rpm -qf` | *n/a*² |
 | `files` | `dpkg -L` | `rpm -ql` | `pacman -Ql` | `apk info -L` | `rpm -ql` | `brew list --verbose` |
 
@@ -124,18 +125,20 @@ asserts every cell.
 | `install` | `yum install` | `xbps-install` | `emerge` | `port install` | `pkg install` | `pkg_add` | `pkgin install` |
 | `remove` | `yum remove` | `xbps-remove` | `--deselect && --depclean` | `port uninstall` | `pkg delete` | `pkg_delete` | `pkgin remove` |
 | `search` | `yum search` | `xbps-query -Rs` | `emerge --search` | `port search` | `pkg search` | `pkg_info -Q` | `pkgin search` |
-| `info` | `yum info` | `xbps-query -RS` | `emerge --info` | `port info` | `pkg info` | `pkg_info` | `pkgin pkg-descr` |
+| `info` | `yum info` | `xbps-query -RS` | `emerge -pv` | `port info` | `pkg info` | `pkg_info` | `pkgin pkg-descr` |
 | `refresh` | `yum makecache` | `xbps-install -S` | `emerge --sync` | `port sync` | `pkg update` | *n/a*² | `pkgin update` |
 | `upgrade` | `yum update` | `xbps-install -Su` | `--sync && -uDN @world` | `selfupdate && upgrade outdated` | `pkg upgrade` | `pkg_add -u` | `update && full-upgrade` |
 | `list` | `rpm -qa` | `xbps-query -l` | `qlist -Iv` | `port installed` | `pkg info` | `pkg_info` | `pkgin list` |
 | `orphans` | `yum autoremove` | `xbps-remove -o` | `emerge --depclean` | `port uninstall leaves` | `pkg autoremove` | `pkg_delete -a` | `pkgin autoremove` |
-| `clean` | `yum clean all` | `xbps-remove -O` | `eclean-dist` | `port reclaim` | `pkg clean` | *n/a*² | `pkgin clean` |
+| `clean` | `yum clean all` | `xbps-remove -O` | `eclean-dist` | `port clean --all` | `pkg clean` | *n/a*² | `pkgin clean` |
 | `owns` | `rpm -qf` | `xbps-query -o` | `qfile` | `port provides` | `pkg which` | `pkg_info -E` | `pkg_info -Fe` |
 | `files` | `rpm -ql` | `xbps-query -f` | `qlist` | `port contents` | `pkg info -l` | `pkg_info -L` | `pkgin pkg-content` |
 
 ¹ See [pacman and `refresh`](#pacman-and-refresh) below.
 ² Exits with code 3 and a one-line explanation of why the operation doesn't
 exist there — run it to see the reason.
+³ Guarded: pkx removes the orphans only when the query returns some, so an
+empty result is a clean no-op rather than an error.
 
 Meta-commands:
 
@@ -149,7 +152,7 @@ Meta-commands:
 
 | Flag | Meaning |
 |---|---|
-| `-y`, `--yes` | Assume yes on prompts (maps to `-y`, `--noconfirm`, `--non-interactive`, `-N`, `-I`, ... per manager) |
+| `-y`, `--yes` | Assume yes on prompts (maps to `-y`, `--noconfirm`, `--non-interactive`, `-N`, ... per manager; a no-op where the tool is already non-interactive) |
 | `-n`, `--dry-run` | Print the native command; run nothing |
 | `-q`, `--quiet` | Don't print the native command before running |
 | `--via <mgr>` | Force a specific manager |
