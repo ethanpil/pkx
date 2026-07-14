@@ -22,6 +22,7 @@
 # https://github.com/ethanpil/pax
 
 PKX_VERSION="0.1.0"
+SUPPORTED_MGRS="apt dnf yum pacman apk zypper xbps emerge brew port pkg pkg_add pkgin"
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -30,6 +31,11 @@ PKX_VERSION="0.1.0"
 has() { command -v "$1" >/dev/null 2>&1; }
 
 warn() { printf 'pkx: %s\n' "$*" >&2; }
+
+print_version() { printf 'pkx %s\n' "$PKX_VERSION"; }
+
+# Set $y to the assume-yes flag (with a leading space) when -y/--yes was given.
+yesflag() { if [ "$YES" = 1 ]; then y=" $1"; else y=""; fi; }
 
 # Shell-quote the operands into $pk so `eval "$NATIVE"` treats each argument
 # literally — no word-splitting, no glob expansion, no command injection, and
@@ -86,8 +92,7 @@ Flags:
   -y, --yes          Assume yes on prompts
   -n, --dry-run      Print the native command without running it
   -q, --quiet        Do not print the native command before running
-      --via <mgr>    Force a manager: apt dnf yum pacman apk zypper
-                     xbps emerge brew port pkg pkg_add pkgin
+      --via <mgr>    Force a manager: $SUPPORTED_MGRS
   -h, --help         Show this help
   -V, --version      Show version
 
@@ -197,7 +202,7 @@ needs_root() {
 # ---------------------------------------------------------------------------
 
 build_apt() {
-    y=""; [ "$YES" = 1 ] && y=" -y"
+    yesflag -y
     case "$1" in
         install) NATIVE="${E}apt-get install$y $pk" ;;
         remove)  NATIVE="${E}apt-get remove$y $pk" ;;
@@ -210,12 +215,11 @@ build_apt() {
         clean)   NATIVE="${E}apt-get clean" ;;
         owns)    NATIVE="dpkg -S $pk" ;;
         files)   NATIVE="dpkg -L $pk" ;;
-        raw)     NATIVE="apt-get $pk" ;;
     esac
 }
 
 build_dnf() {
-    y=""; [ "$YES" = 1 ] && y=" -y"
+    yesflag -y
     case "$1" in
         install) NATIVE="${E}dnf install$y $pk" ;;
         remove)  NATIVE="${E}dnf remove$y $pk" ;;
@@ -228,12 +232,11 @@ build_dnf() {
         clean)   NATIVE="${E}dnf clean all" ;;
         owns)    NATIVE="rpm -qf $pk" ;;
         files)   NATIVE="rpm -ql $pk" ;;
-        raw)     NATIVE="dnf $pk" ;;
     esac
 }
 
 build_yum() {
-    y=""; [ "$YES" = 1 ] && y=" -y"
+    yesflag -y
     case "$1" in
         install) NATIVE="${E}yum install$y $pk" ;;
         remove)  NATIVE="${E}yum remove$y $pk" ;;
@@ -246,12 +249,11 @@ build_yum() {
         clean)   NATIVE="${E}yum clean all" ;;
         owns)    NATIVE="rpm -qf $pk" ;;
         files)   NATIVE="rpm -ql $pk" ;;
-        raw)     NATIVE="yum $pk" ;;
     esac
 }
 
 build_pacman() {
-    y=""; [ "$YES" = 1 ] && y=" --noconfirm"
+    yesflag --noconfirm
     case "$1" in
         install) NATIVE="${E}pacman -S$y $pk" ;;
         remove)  NATIVE="${E}pacman -Rns$y $pk" ;;
@@ -264,7 +266,6 @@ build_pacman() {
         clean)   NATIVE="${E}pacman -Sc$y" ;;
         owns)    NATIVE="pacman -Qo $pk" ;;
         files)   NATIVE="pacman -Ql $pk" ;;
-        raw)     NATIVE="pacman $pk" ;;
     esac
 }
 
@@ -289,12 +290,11 @@ build_apk() {
             fi ;;
         owns)    NATIVE="apk info --who-owns $pk" ;;
         files)   NATIVE="apk info -L $pk" ;;
-        raw)     NATIVE="apk $pk" ;;
     esac
 }
 
 build_zypper() {
-    y=""; [ "$YES" = 1 ] && y=" --non-interactive"
+    yesflag --non-interactive
     case "$1" in
         install) NATIVE="${E}zypper$y install $pk" ;;
         remove)  NATIVE="${E}zypper$y remove $pk" ;;
@@ -313,12 +313,11 @@ build_zypper() {
         clean)   NATIVE="${E}zypper clean --all" ;;
         owns)    NATIVE="rpm -qf $pk" ;;
         files)   NATIVE="rpm -ql $pk" ;;
-        raw)     NATIVE="zypper $pk" ;;
     esac
 }
 
 build_xbps() {
-    y=""; [ "$YES" = 1 ] && y=" -y"
+    yesflag -y
     case "$1" in
         install) NATIVE="${E}xbps-install$y $pk" ;;
         remove)  NATIVE="${E}xbps-remove$y $pk" ;;
@@ -331,7 +330,6 @@ build_xbps() {
         clean)   NATIVE="${E}xbps-remove -O$y" ;;
         owns)    NATIVE="xbps-query -o $pk" ;;
         files)   NATIVE="xbps-query -f $pk" ;;
-        raw)     UNSUP="xbps is split across xbps-install/xbps-remove/xbps-query; call them directly" ;;
     esac
 }
 
@@ -351,7 +349,6 @@ build_emerge() {
         clean)   NATIVE="${E}eclean-dist"; REQ=eclean-dist ;;
         owns)    NATIVE="qfile $pk"; REQ=qfile ;;
         files)   NATIVE="qlist $pk"; REQ=qlist ;;
-        raw)     NATIVE="emerge $pk" ;;
     esac
 }
 
@@ -369,12 +366,11 @@ build_brew() {
         clean)   NATIVE="brew cleanup" ;;
         owns)    UNSUP="Homebrew cannot map an arbitrary file back to a package" ;;
         files)   NATIVE="brew list --verbose $pk" ;;
-        raw)     NATIVE="brew $pk" ;;
     esac
 }
 
 build_port() {
-    y=""; [ "$YES" = 1 ] && y=" -N"
+    yesflag -N
     case "$1" in
         install) NATIVE="${E}port$y install $pk" ;;
         remove)  NATIVE="${E}port$y uninstall $pk" ;;
@@ -387,12 +383,11 @@ build_port() {
         clean)   NATIVE="${E}port clean --all installed" ;;
         owns)    NATIVE="port provides $pk" ;;
         files)   NATIVE="port contents $pk" ;;
-        raw)     NATIVE="port $pk" ;;
     esac
 }
 
 build_pkg() {
-    y=""; [ "$YES" = 1 ] && y=" -y"
+    yesflag -y
     case "$1" in
         install) NATIVE="${E}pkg install$y $pk" ;;
         remove)  NATIVE="${E}pkg delete$y $pk" ;;
@@ -405,7 +400,6 @@ build_pkg() {
         clean)   NATIVE="${E}pkg clean$y" ;;
         owns)    NATIVE="pkg which $pk" ;;
         files)   NATIVE="pkg info -l $pk" ;;
-        raw)     NATIVE="pkg $pk" ;;
     esac
 }
 
@@ -425,12 +419,11 @@ build_pkg_add() {
         clean)   UNSUP="OpenBSD keeps no package cache to clean" ;;
         owns)    NATIVE="pkg_info -E $pk" ;;
         files)   NATIVE="pkg_info -L $pk" ;;
-        raw)     UNSUP="OpenBSD uses separate tools (pkg_add, pkg_delete, pkg_info); call them directly" ;;
     esac
 }
 
 build_pkgin() {
-    y=""; [ "$YES" = 1 ] && y=" -y"
+    yesflag -y
     case "$1" in
         install) NATIVE="${E}pkgin$y install $pk" ;;
         remove)  NATIVE="${E}pkgin$y remove $pk" ;;
@@ -443,7 +436,6 @@ build_pkgin() {
         clean)   NATIVE="${E}pkgin clean" ;;
         owns)    NATIVE="pkg_info -Fe $pk" ;;
         files)   NATIVE="pkgin pkg-content $pk" ;;
-        raw)     NATIVE="pkgin $pk" ;;
     esac
 }
 
@@ -462,6 +454,17 @@ build() {
         xbps) REQ=xbps-install ;;
         *)    REQ=$MGR ;;
     esac
+    # raw passes args straight to the native tool (no escalation); handle it
+    # once here rather than in every builder.
+    if [ "$1" = raw ]; then
+        case "$MGR" in
+            xbps)    UNSUP="xbps is split across xbps-install/xbps-remove/xbps-query; call them directly" ;;
+            pkg_add) UNSUP="OpenBSD uses separate tools (pkg_add, pkg_delete, pkg_info); call them directly" ;;
+            apt)     NATIVE="apt-get $pk" ;;
+            *)       NATIVE="$MGR $pk" ;;
+        esac
+        return
+    fi
     "build_$MGR" "$1"
 }
 
@@ -470,8 +473,13 @@ build() {
 # ---------------------------------------------------------------------------
 
 show_which() {
-    printf 'pkx %s\n' "$PKX_VERSION"
-    printf 'manager:    %s (%s)\n' "$MGR" "$MGR_SOURCE"
+    if [ -n "$VIA" ]; then
+        mgr_source="forced via --via/PKX_MANAGER"
+    else
+        mgr_source="auto-detected"
+    fi
+    print_version
+    printf 'manager:    %s (%s)\n' "$MGR" "$mgr_source"
     if [ "$MGR" = brew ]; then
         printf 'escalation: none (Homebrew never runs as root)\n'
     elif [ -n "$SUDO" ]; then
@@ -536,7 +544,7 @@ while [ "$i" -lt "$n" ]; do
             fi ;;
         --via=*)      VIA=${a#--via=} ;;
         -h|--help)    usage; exit 0 ;;
-        -V|--version) printf 'pkx %s\n' "$PKX_VERSION"; exit 0 ;;
+        -V|--version) print_version; exit 0 ;;
         -*)           usage_err "unknown option '$a'" ;;
         *)
             if [ -z "$verb" ]; then
@@ -559,7 +567,7 @@ esac
 case "$verb" in
     "")      usage >&2; exit 2 ;;
     help)    usage; exit 0 ;;
-    version) printf 'pkx %s\n' "$PKX_VERSION"; exit 0 ;;
+    version) print_version; exit 0 ;;
     install|remove|search|info|refresh|upgrade|list|orphans|clean|owns|files|which|raw) ;;
     *)       usage_err "unknown command '$verb'" ;;
 esac
@@ -570,16 +578,14 @@ esac
 
 if [ -n "$VIA" ]; then
     MGR=$(canon_mgr "$VIA")
-    [ -n "$MGR" ] || usage_err "unknown manager '$VIA' (supported: apt dnf yum pacman apk zypper xbps emerge brew port pkg pkg_add pkgin)"
-    MGR_SOURCE="forced via --via/PKX_MANAGER"
+    [ -n "$MGR" ] || usage_err "unknown manager '$VIA' (supported: $SUPPORTED_MGRS)"
 else
     MGR=$(detect_mgr)
     if [ -z "$MGR" ]; then
         warn "no supported package manager found on this system"
-        warn "supported: apt dnf yum pacman apk zypper xbps emerge brew port pkg pkg_add pkgin"
+        warn "supported: $SUPPORTED_MGRS"
         exit 1
     fi
-    MGR_SOURCE="auto-detected"
 fi
 
 resolve_sudo
