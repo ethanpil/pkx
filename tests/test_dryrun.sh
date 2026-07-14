@@ -259,6 +259,11 @@ ok apt "sudo apt-get install -y foo"                             -y install foo
 ok pacman "sudo pacman -S foo"                                   --via pacman install foo
 ok pacman "sudo pacman -S foo"                                   --via=arch install foo
 
+# --- end-of-options (--) ----------------------------------------------------
+ok apt "sudo apt-get remove -foo"                                remove -- -foo
+ok apt "dpkg -S -x"                                              owns -- -x
+ok apt "sudo apt-get install -y bar"                             -y install -- bar
+
 # --- operand quoting (safe eval) -------------------------------------------
 ok apt "apt-cache show 'perl(URI)'"          info "perl(URI)"
 ok apk "sudo apk add 'foo>=1.0'"             install "foo>=1.0"

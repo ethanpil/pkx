@@ -88,6 +88,9 @@ Flags:
   -h, --help         Show this help
   -V, --version      Show version
 
+Flags must come before the command. Use -- to end flag parsing when an
+operand starts with '-' (e.g. pkx remove -- -somepkg).
+
 Environment:
   PKX_MANAGER        Same as --via
   PKX_SUDO           Privilege command to prefix root operations
@@ -483,20 +486,21 @@ DRYRUN=0
 QUIET=0
 VIA="${PKX_MANAGER:-}"
 verb=""
-rawsep=0
+endopts=0
 
 n=$#
 i=0
 while [ "$i" -lt "$n" ]; do
     a=$1; shift; i=$((i + 1))
-    if [ "$verb" = raw ]; then
-        # after 'raw', everything is passed through verbatim
-        # (minus one optional leading --)
-        if [ "$a" = "--" ] && [ "$rawsep" = 0 ]; then
-            rawsep=1
-            continue
-        fi
-        set -- "$@" "$a"
+    # A single -- ends flag parsing; everything after it is a verb/operand,
+    # even if it starts with '-'. Everything after the 'raw' verb is likewise
+    # passed through verbatim.
+    if [ "$endopts" = 0 ] && [ "$a" = "--" ]; then
+        endopts=1
+        continue
+    fi
+    if [ "$verb" = raw ] || [ "$endopts" = 1 ]; then
+        if [ -z "$verb" ]; then verb=$a; else set -- "$@" "$a"; fi
         continue
     fi
     case "$a" in
