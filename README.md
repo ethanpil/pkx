@@ -68,6 +68,7 @@ pkx remove htop            # uninstall
 pkx search terminal        # search the repos
 pkx info tmux              # package details
 pkx upgrade                # refresh index + upgrade everything
+pkx upgrade htop           # upgrade just one package
 pkx list                   # installed packages
 pkx owns /usr/bin/vim      # which package owns this file?
 pkx files tmux             # which files did this package install?
@@ -114,6 +115,7 @@ command for every one of these mappings.
 | `info` | `apt-cache show` | `dnf info` | `pacman -Si` | `apk search -e -v` | `zypper info` | `brew info` |
 | `refresh` | `apt-get update` | `dnf makecache` | *refused*¹ | `apk update` | `zypper refresh` | `brew update` |
 | `upgrade` | `update && dist-upgrade` | `dnf upgrade --refresh` | `pacman -Syu` | `update && upgrade` | `refresh && update` | `update && upgrade` |
+| `upgrade <pkg>` | `install --only-upgrade` | `dnf upgrade` | *refused*⁴ | `apk upgrade` | `zypper update` | `brew upgrade` |
 | `list` | `dpkg --get-selections` | `rpm -qa` | `pacman -Q` | `apk info` | `zypper search --installed-only` | `brew list --versions` |
 | `orphans` | `apt-get autoremove` | `dnf autoremove` | `-Rns $(pacman -Qdtq)`³ | *n/a*² | *n/a*² | `brew autoremove` |
 | `clean` | `apt-get clean` | `dnf clean all` | `pacman -Sc` | `apk cache clean` | `zypper clean --all` | `brew cleanup` |
@@ -128,6 +130,7 @@ command for every one of these mappings.
 | `info` | `yum info` | `xbps-query -RS` | `emerge -pv` | `port info` | `pkg search -f` | `pkg_info -Q` | `pkgin pkg-descr` |
 | `refresh` | `yum makecache` | `xbps-install -S` | `emerge --sync` | `port sync` | `pkg update` | *n/a*² | `pkgin update` |
 | `upgrade` | `yum update` | `xbps-install -Su` | `--sync && -uDN @world` | `selfupdate && upgrade outdated` | `pkg upgrade` | `pkg_add -u` | `update && full-upgrade` |
+| `upgrade <pkg>` | `yum update` | `xbps-install -u` | `emerge --update` | `port upgrade` | `pkg upgrade` | `pkg_add -u` | `pkgin install` |
 | `list` | `rpm -qa` | `xbps-query -l` | `qlist -Iv` | `port installed` | `pkg info` | `pkg_info` | `pkgin list` |
 | `orphans` | `yum autoremove` | `xbps-remove -o` | `emerge --depclean` | `port uninstall leaves` | `pkg autoremove` | `pkg_delete -a` | `pkgin autoremove` |
 | `clean` | `yum clean all` | `xbps-remove -O` | `eclean-dist` | `port clean --all` | `pkg clean` | *n/a*² | `pkgin clean` |
@@ -139,6 +142,7 @@ command for every one of these mappings.
 exist there — run it to see the reason.
 ³ Guarded: pkx removes the orphans only when the query returns some, so an
 empty result is a clean no-op rather than an error.
+⁴ See [Upgrading a single package](#upgrading-a-single-package) below.
 
 Meta-commands:
 
@@ -206,13 +210,27 @@ pkx picks between them from `/etc/os-release`.
 (RHEL/CentOS 7+). On the much older yum of RHEL/CentOS 6 there is no
 `autoremove`, and the command will report that.
 
+### Upgrading a single package
+
+`pkx upgrade <pkg>` upgrades only the named packages, using each manager's
+real single-package upgrade command — `brew upgrade`, `dnf upgrade`,
+`xbps-install -u`, `apt-get install --only-upgrade`, and so on. This matters
+because on Homebrew, MacPorts, xbps and OpenBSD's `pkg_add`, a plain
+*install* of an already-installed package is a no-op, so `pkx install <pkg>`
+would silently not upgrade it.
+
+**On Arch this is refused** (exit 3). Upgrading one package on its own is a
+[partial upgrade](https://wiki.archlinux.org/title/System_maintenance#Partial_upgrades_are_unsupported),
+which can break the system, so pkx points you at `pkx upgrade`
+(`pacman -Syu`) instead — the same fail-loudly rule as `refresh`.
+
 ### One verb, one meaning
 
-`refresh` only updates the index. `upgrade` refreshes and then upgrades
-everything (a compound command where the native tool needs one — dry-run
-shows exactly what will execute, e.g.
-`apt-get update && apt-get dist-upgrade`). `pkx upgrade foo` is rejected on
-purpose: upgrading a single package is `pkx install foo`.
+`refresh` only updates the index. `upgrade` with no arguments refreshes and
+then upgrades everything (a compound command where the native tool needs one
+— dry-run shows exactly what will execute, e.g.
+`apt-get update && apt-get dist-upgrade`); with arguments it upgrades just
+those packages.
 
 ## Prior art
 
@@ -240,6 +258,39 @@ Every cell of the verb table above is asserted there. CI additionally runs
 busybox `ash`, and `bash --posix`.
 
 ## Changelog
+
+### 0.2.0 — 2026-07-14
+
+**Added**
+
+- `pkx upgrade <pkg>` — upgrade one or more named packages instead of
+  everything, using each manager's real single-package upgrade command
+  (`brew upgrade`, `dnf upgrade`, `xbps-install -u`,
+  `apt-get install --only-upgrade`, …). Previously `upgrade` refused any
+  argument and suggested `pkx install <pkg>`, which is a silent no-op on
+  Homebrew, MacPorts, xbps and OpenBSD's `pkg_add`. Refused on Arch, where
+  a single-package upgrade is an unsupported partial upgrade.
+- `--` ends flag parsing, so an operand beginning with `-` can be passed.
+
+**Fixed**
+
+- Operands are shell-quoted, so package specs like `perl(URI)` and
+  `foo>=1.0`, paths with spaces, and shell metacharacters are passed
+  through literally instead of being re-split, glob-expanded, or executed.
+- `remove` on Gentoo scoped `--depclean` to the named package (it removed
+  every system-wide orphan).
+- `clean` on MacPorts cleared caches instead of uninstalling ports.
+- `clean` on Alpine no longer swallows sudo's password prompt or
+  misreports real errors, and is a clean no-op when no cache is enabled.
+- `orphans` on Arch is a clean no-op when there are none.
+- `info` on Alpine, Gentoo, FreeBSD and OpenBSD queries the repositories,
+  so it works for packages that are not installed yet.
+- `-y` on OpenBSD no longer maps to `pkg_add -I` (which skips install
+  scripts rather than assuming yes).
+- `clean` on Arch uses `-Sc`, not the far more destructive `-Scc`.
+- `upgrade` on openSUSE Tumbleweed uses `dist-upgrade`.
+- Verbs that shell out to a helper tool (Gentoo's `qlist`, `qfile`,
+  `eclean-dist`) report the missing tool instead of dying with a raw 127.
 
 ### 0.1.0 — 2026-07-14
 

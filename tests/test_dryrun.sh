@@ -264,6 +264,24 @@ ok apt "sudo apt-get remove -foo"                                remove -- -foo
 ok apt "dpkg -S -x"                                              owns -- -x
 ok apt "sudo apt-get install -y bar"                             -y install -- bar
 
+# --- single-package upgrade (pkx upgrade <pkg>) -----------------------------
+ok apt     "sudo apt-get install --only-upgrade foo"    upgrade foo
+ok apt     "sudo apt-get install --only-upgrade -y foo" upgrade -y foo
+ok dnf     "sudo dnf upgrade foo"                       upgrade foo
+ok yum     "sudo yum update foo"                        upgrade foo
+no pacman                                               upgrade foo
+ok apk     "sudo apk upgrade foo"                       upgrade foo
+ok zypper  "sudo zypper update foo"                     upgrade foo
+ok xbps    "sudo xbps-install -u foo"                   upgrade foo
+ok emerge  "sudo emerge --update foo"                   upgrade foo
+ok brew    "brew upgrade foo"                           upgrade foo
+ok port    "sudo port upgrade foo"                      upgrade foo
+ok pkg     "sudo pkg upgrade foo"                       upgrade foo
+ok pkg_add "sudo pkg_add -u foo"                        upgrade foo
+ok pkgin   "sudo pkgin install foo"                     upgrade foo
+ok apt     "sudo apt-get install --only-upgrade foo bar" upgrade foo bar
+ok apt     "sudo apt-get install --only-upgrade foo"    up foo
+
 # --- operand quoting (safe eval) -------------------------------------------
 ok apt "apt-cache show 'perl(URI)'"          info "perl(URI)"
 ok apk "sudo apk add 'foo>=1.0'"             install "foo>=1.0"
@@ -319,7 +337,6 @@ esac
 err
 err bogusverb
 err install
-err upgrade foo
 err --via bogus install foo
 err --badflag install foo
 err raw
