@@ -146,7 +146,8 @@ Meta-commands:
   verb mapping for this system.
 - `pkx raw -- <args>` — escape hatch: pass args straight to the native tool
   (`pkx raw -- -Syu` on Arch runs `pacman -Syu`). No sudo is added — you're
-  in manual mode.
+  in manual mode. Unsupported on xbps and OpenBSD's pkg_add, whose operations
+  are split across several separate binaries (exit 3 — call them directly).
 
 ## Flags and environment
 
@@ -165,8 +166,9 @@ Meta-commands:
 | `PKX_SUDO` | Privilege command to use for root operations. Default: plain when root, else `sudo`, else `doas`. Set it empty (`PKX_SUDO=`) to disable escalation, or e.g. `PKX_SUDO="sudo -E"` to customize. |
 
 **Exit codes:** `2` usage error, `3` verb not supported by this manager,
-`1` no manager found; anything else is the native tool's exit code, passed
-through untouched — so scripts can tell pkx problems from package problems.
+`1` no manager found (or a forced/detected manager whose binary is missing);
+anything else is the native tool's exit code, passed through untouched — so
+scripts can tell pkx problems from package problems.
 
 ## Quirks and design notes
 
@@ -190,8 +192,19 @@ Every other manager gets `sudo`/`doas` only for verbs that need it
 
 `list`, `owns` and `files` use `qlist`/`qfile` from **portage-utils**, and
 `clean` uses `eclean-dist` from **gentoolkit** — the standard Gentoo admin
-tools. If they're missing you'll get a plain command-not-found from the
-system, and `pkx -n <verb>` shows you what would have run.
+tools. If one is missing, pkx checks the leading binary before running and
+tells you which tool to install rather than failing mid-command; `pkx -n
+<verb>` shows you what would have run.
+
+### Rolling releases and legacy tools
+
+`pkx upgrade` on openSUSE **Tumbleweed** uses `zypper dist-upgrade` (`dup`),
+the correct path for a rolling release; Leap and SLES get `zypper update`.
+pkx picks between them from `/etc/os-release`.
+
+`pkx orphans` on **yum** uses `yum autoremove`, which exists on yum ≥ 3.4.3
+(RHEL/CentOS 7+). On the much older yum of RHEL/CentOS 6 there is no
+`autoremove`, and the command will report that.
 
 ### One verb, one meaning
 
