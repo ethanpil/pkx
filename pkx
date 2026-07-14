@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC2329  # build_* funcs are dispatched indirectly via "build_$MGR"
 # pkx — one package-manager syntax for every Unix.
 #
 # A single POSIX sh script that wraps the native package manager on
@@ -159,6 +160,7 @@ resolve_sudo() {
     ROOT=0
     [ "$(id -u 2>/dev/null)" = "0" ] && ROOT=1
     if [ "${PKX_SUDO+set}" = set ]; then
+        # shellcheck disable=SC2154  # PKX_SUDO is an external environment variable
         SUDO=$PKX_SUDO
     elif [ "$ROOT" = 1 ]; then
         SUDO=""
