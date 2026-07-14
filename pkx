@@ -398,16 +398,18 @@ build_pkg() {
 }
 
 build_pkg_add() {
-    y=""; [ "$YES" = 1 ] && y=" -I"
+    # pkg_add/pkg_delete are non-interactive already, and there is no
+    # "assume yes" flag (-I means "do not run install/deinstall scripts"),
+    # so -y is a no-op here.
     case "$1" in
-        install) NATIVE="${E}pkg_add$y $pk" ;;
-        remove)  NATIVE="${E}pkg_delete$y $pk" ;;
+        install) NATIVE="${E}pkg_add $pk" ;;
+        remove)  NATIVE="${E}pkg_delete $pk" ;;
         search)  NATIVE="pkg_info -Q $pk" ;;
         info)    NATIVE="pkg_info $pk" ;;
         refresh) UNSUP="OpenBSD has no separate index refresh; pkg_add always queries the mirrors" ;;
-        upgrade) NATIVE="${E}pkg_add -u$y" ;;
+        upgrade) NATIVE="${E}pkg_add -u" ;;
         list)    NATIVE="pkg_info" ;;
-        orphans) NATIVE="${E}pkg_delete -a$y" ;;
+        orphans) NATIVE="${E}pkg_delete -a" ;;
         clean)   UNSUP="OpenBSD keeps no package cache to clean" ;;
         owns)    NATIVE="pkg_info -E $pk" ;;
         files)   NATIVE="pkg_info -L $pk" ;;

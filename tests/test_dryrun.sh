@@ -219,7 +219,7 @@ ok pkg "pkg info -l foo"                                         files foo
 
 # --- pkg_add (OpenBSD) -----------------------------------------------------
 ok pkg_add "sudo pkg_add foo"                                    install foo
-ok pkg_add "sudo pkg_add -I foo"                                 install -y foo
+ok pkg_add "sudo pkg_add foo"                                    install -y foo
 ok pkg_add "sudo pkg_delete foo"                                 remove foo
 ok pkg_add "pkg_info -Q foo"                                     search foo
 ok pkg_add "pkg_info foo"                                        info foo
