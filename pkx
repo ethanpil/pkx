@@ -266,7 +266,7 @@ build_apk() {
         install) NATIVE="${E}apk add $pk" ;;
         remove)  NATIVE="${E}apk del $pk" ;;
         search)  NATIVE="apk search $pk" ;;
-        info)    NATIVE="apk info $pk" ;;
+        info)    NATIVE="apk search -e -v $pk" ;;
         refresh) NATIVE="${E}apk update" ;;
         upgrade) NATIVE="${E}apk update && ${E}apk upgrade" ;;
         list)    NATIVE="apk info" ;;

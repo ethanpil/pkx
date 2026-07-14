@@ -125,7 +125,7 @@ ok pacman "pacman -Syu"                                          raw -- -Syu
 ok apk "sudo apk add foo"                                        install foo
 ok apk "sudo apk del foo"                                        remove foo
 ok apk "apk search foo"                                          search foo
-ok apk "apk info foo"                                            info foo
+ok apk "apk search -e -v foo"                                    info foo
 ok apk "sudo apk update"                                         refresh
 ok apk "sudo apk update && sudo apk upgrade"                     upgrade
 ok apk "apk info"                                                list
