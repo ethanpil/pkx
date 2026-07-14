@@ -167,7 +167,7 @@ no xbps raw -- foo
 ok emerge "sudo emerge foo"                                      install foo
 ok emerge "sudo emerge --deselect foo && sudo emerge --depclean foo" remove foo
 ok emerge "emerge --search foo"                                  search foo
-ok emerge "emerge --info foo"                                    info foo
+ok emerge "emerge --pretend --verbose foo"                       info foo
 ok emerge "sudo emerge --sync"                                   refresh
 ok emerge "sudo emerge --sync && sudo emerge --update --deep --newuse @world" upgrade
 ok emerge "qlist -Iv"                                            list

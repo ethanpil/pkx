@@ -322,7 +322,7 @@ build_emerge() {
         install) NATIVE="${E}emerge $pk" ;;
         remove)  NATIVE="${E}emerge --deselect $pk && ${E}emerge --depclean $pk" ;;
         search)  NATIVE="emerge --search $pk" ;;
-        info)    NATIVE="emerge --info $pk" ;;
+        info)    NATIVE="emerge --pretend --verbose $pk" ;;
         refresh) NATIVE="${E}emerge --sync" ;;
         upgrade) NATIVE="${E}emerge --sync && ${E}emerge --update --deep --newuse @world" ;;
         list)    NATIVE="qlist -Iv" ;;
