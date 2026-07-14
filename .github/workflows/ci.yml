@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install linters
+        run: sudo apt-get update && sudo apt-get install -y shellcheck devscripts
+      - name: shellcheck (POSIX sh)
+        run: shellcheck --shell=sh pkx tests/test_dryrun.sh
+      - name: checkbashisms
+        run: checkbashisms pkx tests/test_dryrun.sh
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shells
+        run: sudo apt-get update && sudo apt-get install -y dash busybox
+      - name: Test under dash (Ubuntu /bin/sh)
+        run: sh tests/test_dryrun.sh
+      - name: Test under busybox ash
+        run: PKX_SH="busybox sh" sh tests/test_dryrun.sh
+      - name: Test under bash --posix
+        run: PKX_SH="bash --posix" sh tests/test_dryrun.sh
