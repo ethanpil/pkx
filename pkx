@@ -125,15 +125,6 @@ canon_mgr() {
     esac
 }
 
-# The binary that must exist for a manager to be usable.
-mgr_bin() {
-    case "$1" in
-        apt)     echo apt-get ;;
-        xbps)    echo xbps-install ;;
-        *)       echo "$1" ;;
-    esac
-}
-
 # Detection order matters: native distro managers first, brew last so a
 # Linux box with linuxbrew still gets its real manager. "pkg" is guarded
 # by uname because the name collides (Termux, others).
@@ -598,11 +589,20 @@ if [ "$DRYRUN" = 1 ]; then
     exit 0
 fi
 
-bin=$(mgr_bin "$MGR")
-if ! has "$bin"; then
-    warn "manager '$MGR' selected but '$bin' not found on this system"
-    exit 1
-fi
+# Verify the command's leading binary exists, so verbs that shell out to
+# helper tools (e.g. Gentoo qlist/qfile/eclean-dist) fail cleanly instead of
+# with a raw 127 after the teaching line has already printed.
+checkbin=$NATIVE
+[ -n "$SUDO" ] && checkbin=${checkbin#"$SUDO "}
+checkbin=${checkbin%% *}
+case $checkbin in
+    *=*) : ;;  # compound starting with a variable assignment (pacman orphans)
+    *)
+        if ! has "$checkbin"; then
+            warn "manager '$MGR' needs '$checkbin', which is not installed"
+            exit 1
+        fi ;;
+esac
 
 if needs_root "$verb" && [ "$ROOT" = 0 ] && [ -z "$SUDO" ]; then
     warn "warning: not running as root and no sudo/doas found; trying anyway"
