@@ -234,10 +234,11 @@ pkx picks between them from `/etc/os-release`.
 (RHEL/CentOS 7+). On the much older yum of RHEL/CentOS 6 there is no
 `autoremove`, and the command will report that.
 
-`pkx clean` on **Alpine** runs `apk cache clean`, which errors if no local
-package cache is configured (the default on minimal installs and the
-official Docker image) — that is apk itself telling you there is nothing
-to clean.
+`pkx clean` on **Alpine** runs `apk cache clean`. With no local package
+cache configured (the default on minimal installs and the official Docker
+image), apk-tools 2.x errors — apk itself telling you there is nothing to
+clean — while apk-tools 3.x treats it as a quiet no-op (verified on
+Alpine 3.24 / apk 3.0.6).
 
 `pkx upgrade` on **Debian/Ubuntu** joins the two steps with `;` rather than
 `&&`: `apt-get update` exits non-zero on a benign partial refresh (one dead
