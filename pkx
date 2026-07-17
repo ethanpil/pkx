@@ -45,7 +45,9 @@ yesflag() { if [ "$YES" = 1 ]; then y=" $1"; else y=""; fi; }
 # anything else is single-quoted with embedded single quotes escaped.
 shquote() {
     pk=""
+    DASHED=0
     for _a in "$@"; do
+        case $_a in -*) DASHED=1 ;; esac
         case $_a in
             # the safe set is spelled out (no a-z ranges) so classification
             # cannot vary with the caller's locale collation
@@ -85,12 +87,15 @@ Commands:
   refresh            Update the package index only
   upgrade [pkg]...   Refresh index and upgrade everything, or upgrade only
                      the named packages                    (alias: up)
+  outdated           List packages with available upgrades
   list               List installed packages                (alias: ls)
+  installed <pkg>... Check whether packages are installed
   orphans            Remove dependencies no longer needed
   clean              Clear the package manager caches
   owns <file>...     Show which package owns a file
   files <pkg>...     List files installed by a package
-  which              Show the detected manager and every verb mapping
+  which [verb]       Show the detected manager and verb mappings
+                     (all of them, or just one)
   raw [--] <args>    Pass args straight to the native tool (no sudo)
   help               Show this help
   version            Show version
@@ -111,6 +116,7 @@ Environment:
   PKX_MANAGER        Same as --via
   PKX_SUDO           Privilege command to prefix root operations
                      (default: sudo, then doas; set empty to disable)
+  PKX_QUIET          Set non-empty to silence teaching mode (same as -q)
 
 Supported managers (for --via / PKX_MANAGER):
   $SUPPORTED_MGRS
@@ -228,6 +234,8 @@ build_apt() {
             else
                 NATIVE="${E}apt-get update; ${E}apt-get dist-upgrade$y"
             fi ;;
+        outdated) NATIVE="apt list --upgradable" ;;
+        installed) NATIVE="dpkg -s $pk" ;;
         list)    NATIVE="apt list --installed" ;;
         orphans) NATIVE="${E}apt-get autoremove$y" ;;
         clean)   NATIVE="${E}apt-get clean" ;;
@@ -245,6 +253,8 @@ build_dnf() {
         info)    NATIVE="dnf info $pk" ;;
         refresh) NATIVE="${E}dnf makecache" ;;
         upgrade) NATIVE="${E}dnf upgrade --refresh$y${pk:+ $pk}" ;;
+        outdated) NATIVE="dnf check-update" ;;
+        installed) NATIVE="rpm -q $pk" ;;
         list)    NATIVE="rpm -qa" ;;
         orphans) NATIVE="${E}dnf autoremove$y" ;;
         clean)   NATIVE="${E}dnf clean all" ;;
@@ -262,6 +272,8 @@ build_yum() {
         info)    NATIVE="yum info $pk" ;;
         refresh) NATIVE="${E}yum makecache" ;;
         upgrade) NATIVE="${E}yum update$y${pk:+ $pk}" ;;
+        outdated) NATIVE="yum check-update" ;;
+        installed) NATIVE="rpm -q $pk" ;;
         list)    NATIVE="rpm -qa" ;;
         orphans) NATIVE="${E}yum autoremove$y" ;;
         clean)   NATIVE="${E}yum clean all" ;;
@@ -285,6 +297,8 @@ build_pacman() {
             else
                 NATIVE="${E}pacman -Syu$y"
             fi ;;
+        outdated) NATIVE="pacman -Qu" ;;
+        installed) NATIVE="pacman -Q $pk" ;;
         list)    NATIVE="pacman -Q" ;;
         orphans) REQ=pacman
                  NATIVE="if orphans=\$(pacman -Qdtq); then ${E}pacman -Rns$y \$orphans; else echo 'pkx: no orphaned packages to remove'; fi" ;;
@@ -303,6 +317,8 @@ build_apk() {
         info)    NATIVE="apk search -e -v $pk" ;;
         refresh) NATIVE="${E}apk update" ;;
         upgrade) NATIVE="${E}apk update && ${E}apk upgrade${pk:+ $pk}" ;;
+        outdated) NATIVE="apk list -u" ;;
+        installed) NATIVE="apk info -e $pk" ;;
         list)    NATIVE="apk list --installed" ;;
         orphans) UNSUP="apk removes unneeded dependencies automatically when you 'pkx remove' a package" ;;
         clean)   NATIVE="${E}apk cache clean" ;;
@@ -339,6 +355,8 @@ build_zypper() {
                 fi
                 NATIVE="${E}zypper refresh && ${E}zypper$y update${pk:+ $pk}"
             fi ;;
+        outdated) NATIVE="zypper list-updates" ;;
+        installed) NATIVE="rpm -q $pk" ;;
         list)    NATIVE="zypper search --installed-only" ;;
         orphans) UNSUP="zypper has no autoremove; remove a package with its deps via 'zypper remove --clean-deps <pkg>'" ;;
         clean)   NATIVE="${E}zypper clean --all" ;;
@@ -356,6 +374,8 @@ build_xbps() {
         info)    NATIVE="xbps-query -RS $pk" ;;
         refresh) NATIVE="${E}xbps-install -S" ;;
         upgrade) NATIVE="${E}xbps-install -Su$y${pk:+ $pk}" ;;
+        outdated) NATIVE="xbps-install -un" ;;
+        installed) NATIVE="xbps-query -S $pk" ;;
         list)    NATIVE="xbps-query -l" ;;
         orphans) NATIVE="${E}xbps-remove -o$y" ;;
         clean)   NATIVE="${E}xbps-remove -O$y" ;;
@@ -381,6 +401,8 @@ build_emerge() {
             else
                 NATIVE="${E}emerge --sync && ${E}emerge --update --deep --newuse @world"
             fi ;;
+        outdated) NATIVE="emerge --pretend --update --deep --newuse @world" ;;
+        installed) NATIVE="qlist -I $pk" ;;
         list)    NATIVE="qlist -Iv" ;;
         orphans) NATIVE="${E}emerge --depclean" ;;
         clean)   NATIVE="${E}eclean-dist" ;;
@@ -398,6 +420,8 @@ build_brew() {
         info)    NATIVE="brew info $pk" ;;
         refresh) NATIVE="brew update" ;;
         upgrade) NATIVE="brew update && brew upgrade${pk:+ $pk}" ;;
+        outdated) NATIVE="brew outdated" ;;
+        installed) NATIVE="brew list --versions $pk" ;;
         list)    NATIVE="brew list --versions" ;;
         orphans) NATIVE="brew autoremove" ;;
         clean)   NATIVE="brew cleanup" ;;
@@ -415,6 +439,10 @@ build_port() {
         info)    NATIVE="port info $pk" ;;
         refresh) NATIVE="${E}port sync" ;;
         upgrade) NATIVE="${E}port selfupdate && ${E}port$y upgrade ${pk:-outdated}" ;;
+        outdated) NATIVE="port outdated" ;;
+        installed)
+            # port always exits 0; grep supplies the yes/no exit code
+            NATIVE="port -q installed $pk | grep ." ;;
         list)    NATIVE="port installed" ;;
         orphans) NATIVE="${E}port$y uninstall leaves" ;;
         clean)   NATIVE="${E}port clean --all installed" ;;
@@ -432,6 +460,8 @@ build_pkg() {
         info)    NATIVE="pkg search -e -f $pk" ;;
         refresh) NATIVE="${E}pkg update" ;;
         upgrade) NATIVE="${E}pkg upgrade$y${pk:+ $pk}" ;;
+        outdated) NATIVE="pkg version -vRL=" ;;
+        installed) NATIVE="pkg info $pk" ;;
         list)    NATIVE="pkg info" ;;
         orphans) NATIVE="${E}pkg autoremove$y" ;;
         clean)   NATIVE="${E}pkg clean$y" ;;
@@ -451,6 +481,8 @@ build_pkg_add() {
         info)    NATIVE="pkg_info $pk" ;;
         refresh) UNSUP="OpenBSD has no separate index refresh; pkg_add always queries the mirrors" ;;
         upgrade) NATIVE="${E}pkg_add -u${pk:+ $pk}" ;;
+        outdated) NATIVE="pkg_add -un" ;;
+        installed) NATIVE="pkg_info -e $pk" ;;
         list)    NATIVE="pkg_info" ;;
         orphans) NATIVE="${E}pkg_delete -a" ;;
         clean)   UNSUP="OpenBSD keeps no package cache to clean" ;;
@@ -473,6 +505,8 @@ build_pkgin() {
             else
                 NATIVE="${E}pkgin update && ${E}pkgin$y full-upgrade"
             fi ;;
+        outdated) UNSUP="pkgin cannot list updates separately; run 'pkx upgrade' without -y and answer no to preview" ;;
+        installed) NATIVE="pkg_info -e $pk" ;;
         list)    NATIVE="pkgin list" ;;
         orphans) NATIVE="${E}pkgin$y autoremove" ;;
         clean)   NATIVE="${E}pkgin clean" ;;
@@ -518,28 +552,46 @@ build() {
 # pkx which
 # ---------------------------------------------------------------------------
 
+# show_which [verb] — with a verb, print only that mapping; otherwise the
+# full header and table.
 show_which() {
-    print_version
-    printf 'manager:    %s (%s)\n' "$MGR" "$MGR_SOURCE"
-    if ! needs_root install; then
-        printf 'escalation: none (%s never runs as root)\n' "$MGR"
-    elif [ -n "$SUDO" ]; then
-        printf 'escalation: %s\n' "$SUDO"
-    elif [ "$ROOT" = 1 ]; then
-        printf 'escalation: none (running as root)\n'
-    else
-        printf 'escalation: none (no sudo/doas found)\n'
+    wfilter=${1:-}
+    case "$wfilter" in
+        in) wfilter=install ;;
+        rm) wfilter=remove ;;
+        se) wfilter=search ;;
+        up) wfilter=upgrade ;;
+        ls) wfilter=list ;;
+    esac
+    if [ -z "$wfilter" ]; then
+        print_version
+        printf 'manager:    %s (%s)\n' "$MGR" "$MGR_SOURCE"
+        if ! needs_root install; then
+            printf 'escalation: none (%s never runs as root)\n' "$MGR"
+        elif [ -n "$SUDO" ]; then
+            printf 'escalation: %s\n' "$SUDO"
+        elif [ "$ROOT" = 1 ]; then
+            printf 'escalation: none (running as root)\n'
+        else
+            printf 'escalation: none (no sudo/doas found)\n'
+        fi
+        printf 'aliases:    in=install rm=remove se=search up=upgrade ls=list\n'
+        printf '\n'
     fi
-    printf '\n'
-    for v in install remove search info refresh upgrade upgrade+pkg list orphans clean owns files; do
+    wmatched=0
+    for v in install remove search info refresh upgrade upgrade+pkg outdated list installed orphans clean owns files; do
         label=$v
         case "$v" in
             upgrade+pkg) v=upgrade; label="upgrade <pkg>"; pk="<pkg>" ;;
             owns) pk="<file>" ;;
-            refresh|upgrade|list|orphans|clean) pk="" ;;
+            refresh|upgrade|list|orphans|clean|outdated) pk="" ;;
             search) pk="<term>" ;;
             *) pk="<pkg>" ;;
         esac
+        if [ -n "$wfilter" ] && [ "$v" != "$wfilter" ]; then
+            continue
+        fi
+        wmatched=1
         build "$v"
         if [ -n "$NATIVE" ]; then
             printf '  %-13s %s\n' "$label" "$NATIVE"
@@ -547,6 +599,9 @@ show_which() {
             printf '  %-13s (not supported: %s)\n' "$label" "$UNSUP"
         fi
     done
+    if [ -n "$wfilter" ] && [ "$wmatched" -eq 0 ]; then
+        usage_err "unknown verb '$wfilter'"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -556,6 +611,7 @@ show_which() {
 YES=0
 DRYRUN=0
 QUIET=0
+[ -n "${PKX_QUIET:-}" ] && QUIET=1
 WANT_HELP=0
 WANT_VERSION=0
 VIA="${PKX_MANAGER:-}"
@@ -629,7 +685,7 @@ case "$verb" in
     "")      usage_err "missing command" ;;
     help)    usage; exit 0 ;;
     version) print_version; exit 0 ;;
-    install|remove|search|info|refresh|upgrade|list|orphans|clean|owns|files|which|raw) ;;
+    install|remove|search|info|refresh|upgrade|outdated|list|installed|orphans|clean|owns|files|which|raw) ;;
     *)       usage_err "unknown command '$verb'" ;;
 esac
 
@@ -662,19 +718,28 @@ for _a in "$@"; do
 done
 
 case "$verb" in
-    install|remove|search|info|owns|files|raw)
+    install|remove|search|info|owns|files|raw|installed)
         [ $# -gt 0 ] || usage_err "'$verb' needs at least one argument" ;;
     upgrade) ;;  # no operands = upgrade everything; operands = just those
-    refresh|list|orphans|clean|which)
+    which)
+        [ $# -le 1 ] || usage_err "'which' takes at most one verb" ;;
+    refresh|list|orphans|clean|outdated)
         [ $# -eq 0 ] || usage_err "'$verb' takes no arguments" ;;
 esac
 
 if [ "$verb" = which ]; then
-    show_which
+    show_which "${1:-}"
     exit 0
 fi
 
 shquote "$@"
+
+# An operand beginning with '-' gets an explicit end-of-options marker so
+# the native tool treats it as a name, not flags. raw is exempt: its
+# operands are passed through verbatim by design.
+if [ "$DASHED" = 1 ] && [ "$verb" != raw ]; then
+    pk="-- $pk"
+fi
 
 # ---------------------------------------------------------------------------
 # build and run

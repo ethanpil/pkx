@@ -279,9 +279,11 @@ ok pacman "sudo pacman -S foo"                                   --via pacman in
 ok pacman "sudo pacman -S foo"                                   --via=arch install foo
 
 # --- end-of-options (--) ----------------------------------------------------
-ok apt "sudo apt-get remove -foo"                                remove -- -foo
-ok apt "dpkg -S -x"                                              owns -- -x
+# A dashed operand now also gets a native '--' so the tool sees a name.
+ok apt "sudo apt-get remove -- -foo"                             remove -- -foo
+ok apt "dpkg -S -- -x"                                           owns -- -x
 ok apt "sudo apt-get install -y bar"                             -y install -- bar
+ok pacman "sudo pacman -S -- -foo"                               install -- -foo
 
 # --- single-package upgrade (pkx upgrade <pkg>) -----------------------------
 # The single-package form refreshes the index first, exactly like the
@@ -314,6 +316,37 @@ ok pkgin   "sudo pkgin update && sudo pkgin -y install foo" upgrade -y foo
 ok apt     "sudo apt-get update; sudo apt-get install --only-upgrade foo bar" upgrade foo bar
 ok apt     "sudo apt-get update; sudo apt-get install --only-upgrade foo" up foo
 ok apt     "sudo apt-get update; sudo apt-get install --only-upgrade foo" upgrade -- foo
+
+# --- outdated (list upgradable, read-only, no sudo) --------------------------
+ok apt     "apt list --upgradable"                       outdated
+ok dnf     "dnf check-update"                            outdated
+ok yum     "yum check-update"                            outdated
+ok pacman  "pacman -Qu"                                  outdated
+ok apk     "apk list -u"                                 outdated
+ok zypper  "zypper list-updates"                         outdated
+ok xbps    "xbps-install -un"                            outdated
+ok emerge  "emerge --pretend --update --deep --newuse @world" outdated
+ok brew    "brew outdated"                               outdated
+ok port    "port outdated"                               outdated
+ok pkg     "pkg version -vRL="                           outdated
+ok pkg_add "pkg_add -un"                                 outdated
+no pkgin   "answer no"                                   outdated
+
+# --- installed (is this package installed?) ----------------------------------
+ok apt     "dpkg -s foo"                                 installed foo
+ok dnf     "rpm -q foo"                                  installed foo
+ok yum     "rpm -q foo"                                  installed foo
+ok pacman  "pacman -Q foo"                               installed foo
+ok apk     "apk info -e foo"                             installed foo
+ok zypper  "rpm -q foo"                                  installed foo
+ok xbps    "xbps-query -S foo"                           installed foo
+ok emerge  "qlist -I foo"                                installed foo
+ok brew    "brew list --versions foo"                    installed foo
+ok port    "port -q installed foo | grep ."              installed foo
+ok pkg     "pkg info foo"                                installed foo
+ok pkg_add "pkg_info -e foo"                             installed foo
+ok pkgin   "pkg_info -e foo"                             installed foo
+err installed
 
 # --- generic raw path for more managers -------------------------------------
 ok dnf    "dnf history"                                          raw -- history
@@ -373,6 +406,29 @@ got=$(run_pkx pacman which 2>&1)
 case "$got" in
     *"upgrade <pkg>"*"not supported"*) pass=$((pass + 1)) ;;
     *) fail=$((fail + 1)); echo "FAIL which pacman — missing upgrade <pkg> refusal: $got" ;;
+esac
+# single-verb lookup: only the requested rows, no header
+got=$(run_pkx apt which upgrade 2>&1); rc=$?
+case "$got" in
+    *"--only-upgrade"*)
+        case "$got" in
+            *"apt-cache search"*|*"manager:"*)
+                fail=$((fail + 1)); echo "FAIL which upgrade — unfiltered output: $got" ;;
+            *)
+                if [ "$rc" -eq 0 ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL which upgrade rc=$rc"; fi ;;
+        esac ;;
+    *) fail=$((fail + 1)); echo "FAIL which upgrade — missing single-package row: $got" ;;
+esac
+# aliases resolve in the filter, and the full table shows the alias line
+got=$(run_pkx apt which ls 2>&1)
+case "$got" in
+    *"apt list --installed"*) pass=$((pass + 1)) ;;
+    *) fail=$((fail + 1)); echo "FAIL which ls — got: $got" ;;
+esac
+got=$(run_pkx apt which 2>&1)
+case "$got" in
+    *"aliases:"*) pass=$((pass + 1)) ;;
+    *) fail=$((fail + 1)); echo "FAIL which — missing aliases line: $got" ;;
 esac
 
 # --- version ----------------------------------------------------------------
