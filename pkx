@@ -545,6 +545,8 @@ show_which() {
 YES=0
 DRYRUN=0
 QUIET=0
+WANT_HELP=0
+WANT_VERSION=0
 VIA="${PKX_MANAGER:-}"
 verb=""
 endopts=0
@@ -569,14 +571,16 @@ while [ "$i" -lt "$n" ]; do
         -n|--dry-run) DRYRUN=1 ;;
         -q|--quiet)   QUIET=1 ;;
         --via)
-            if [ "$i" -lt "$n" ]; then
+            if [ "$i" -lt "$n" ] && [ -n "$1" ]; then
                 VIA=$1; shift; i=$((i + 1))
             else
-                usage_err "--via needs a value"
+                usage_err "--via needs a non-empty value"
             fi ;;
-        --via=*)      VIA=${a#--via=} ;;
-        -h|--help)    usage; exit 0 ;;
-        -V|--version) print_version; exit 0 ;;
+        --via=*)
+            VIA=${a#--via=}
+            [ -n "$VIA" ] || usage_err "--via needs a non-empty value" ;;
+        -h|--help)    WANT_HELP=1 ;;
+        -V|--version) WANT_VERSION=1 ;;
         -*)           usage_err "unknown option '$a'" ;;
         *)
             if [ -z "$verb" ]; then
@@ -586,6 +590,20 @@ while [ "$i" -lt "$n" ]; do
             fi ;;
     esac
 done
+
+# -h/-V exit only when they are the whole request; combined with a command
+# they would silently discard it (e.g. 'pkx -V install htop' installing
+# nothing while exiting 0), so that is a usage error instead.
+if [ "$WANT_HELP" = 1 ]; then
+    [ -z "$verb" ] && [ $# -eq 0 ] || usage_err "-h/--help cannot be combined with a command"
+    usage
+    exit 0
+fi
+if [ "$WANT_VERSION" = 1 ]; then
+    [ -z "$verb" ] && [ $# -eq 0 ] || usage_err "-V/--version cannot be combined with a command"
+    print_version
+    exit 0
+fi
 
 # verb aliases
 case "$verb" in
@@ -597,7 +615,7 @@ case "$verb" in
 esac
 
 case "$verb" in
-    "")      usage >&2; exit 2 ;;
+    "")      usage_err "missing command" ;;
     help)    usage; exit 0 ;;
     version) print_version; exit 0 ;;
     install|remove|search|info|refresh|upgrade|list|orphans|clean|owns|files|which|raw) ;;

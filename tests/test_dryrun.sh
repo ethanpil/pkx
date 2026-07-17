@@ -367,6 +367,10 @@ err upgrade ""
 err install ""
 err list foo
 err which foo
+err -V install foo
+err install foo -h
+err --via "" install foo
+err --via= install foo
 
 echo
 echo "pkx dry-run suite: $pass passed, $fail failed"
