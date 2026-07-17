@@ -69,7 +69,7 @@ ok apt "apt-cache show foo"                                      info foo
 ok apt "sudo apt-get update"                                     refresh
 ok apt "sudo apt-get update; sudo apt-get dist-upgrade"        upgrade
 ok apt "sudo apt-get update; sudo apt-get dist-upgrade -y"     upgrade -y
-ok apt "dpkg --get-selections"                                   list
+ok apt "apt list --installed"                                    list
 ok apt "sudo apt-get autoremove"                                 orphans
 ok apt "sudo apt-get clean"                                      clean
 ok apt "dpkg -S /bin/ls"                                         owns /bin/ls
@@ -128,7 +128,7 @@ ok apk "apk search foo"                                          search foo
 ok apk "apk search -e -v foo"                                    info foo
 ok apk "sudo apk update"                                         refresh
 ok apk "sudo apk update && sudo apk upgrade"                     upgrade
-ok apk "apk info"                                                list
+ok apk "apk list --installed"                                    list
 no apk orphans
 ok apk "sudo apk cache clean"                                    clean
 ok apk "apk info --who-owns /bin/ls"                             owns /bin/ls
@@ -251,7 +251,7 @@ ok apt "sudo apt-get install foo"                                in foo
 ok apt "sudo apt-get remove foo"                                 rm foo
 ok apt "apt-cache search foo"                                    se foo
 ok apt "sudo apt-get update; sudo apt-get dist-upgrade"        up
-ok apt "dpkg --get-selections"                                   list
+ok apt "apt list --installed"                                    list
 
 # --- flag placement and forms ----------------------------------------------
 ok apt "sudo apt-get install -y foo"                             install foo -y

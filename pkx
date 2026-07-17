@@ -226,7 +226,7 @@ build_apt() {
             else
                 NATIVE="${E}apt-get update; ${E}apt-get dist-upgrade$y"
             fi ;;
-        list)    NATIVE="dpkg --get-selections" ;;
+        list)    NATIVE="apt list --installed" ;;
         orphans) NATIVE="${E}apt-get autoremove$y" ;;
         clean)   NATIVE="${E}apt-get clean" ;;
         owns)    NATIVE="dpkg -S $pk" ;;
@@ -301,7 +301,7 @@ build_apk() {
         info)    NATIVE="apk search -e -v $pk" ;;
         refresh) NATIVE="${E}apk update" ;;
         upgrade) NATIVE="${E}apk update && ${E}apk upgrade${pk:+ $pk}" ;;
-        list)    NATIVE="apk info" ;;
+        list)    NATIVE="apk list --installed" ;;
         orphans) UNSUP="apk removes unneeded dependencies automatically when you 'pkx remove' a package" ;;
         clean)   NATIVE="${E}apk cache clean" ;;
         owns)    NATIVE="apk info --who-owns $pk" ;;
