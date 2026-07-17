@@ -218,10 +218,13 @@ build_apt() {
         info)    NATIVE="apt-cache show $pk" ;;
         refresh) NATIVE="${E}apt-get update" ;;
         upgrade)
+            # ';' not '&&': apt-get update exits 100 on a benign partial
+            # refresh (one dead PPA) while the usable lists still updated;
+            # blocking all upgrades on that would be worse than proceeding.
             if [ -n "$pk" ]; then
-                NATIVE="${E}apt-get update && ${E}apt-get install --only-upgrade$y $pk"
+                NATIVE="${E}apt-get update; ${E}apt-get install --only-upgrade$y $pk"
             else
-                NATIVE="${E}apt-get update && ${E}apt-get dist-upgrade$y"
+                NATIVE="${E}apt-get update; ${E}apt-get dist-upgrade$y"
             fi ;;
         list)    NATIVE="dpkg --get-selections" ;;
         orphans) NATIVE="${E}apt-get autoremove$y" ;;
@@ -326,6 +329,12 @@ build_zypper() {
                     NATIVE="${E}zypper refresh && ${E}zypper$y dist-upgrade"
                 fi
             else
+                # Don't fail open silently: if the distro file is unreadable
+                # this could still BE Tumbleweed, where 'update' is a
+                # partial upgrade. Warn (except during dry-run).
+                if [ ! -r /etc/os-release ] && [ "$DRYRUN" != 1 ]; then
+                    warn "warning: cannot read /etc/os-release; assuming non-rolling zypper (Tumbleweed needs 'zypper dist-upgrade')"
+                fi
                 NATIVE="${E}zypper refresh && ${E}zypper$y update${pk:+ $pk}"
             fi ;;
         list)    NATIVE="zypper search --installed-only" ;;

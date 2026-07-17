@@ -67,8 +67,8 @@ ok apt "sudo apt-get remove foo"                                 remove foo
 ok apt "apt-cache search foo"                                    search foo
 ok apt "apt-cache show foo"                                      info foo
 ok apt "sudo apt-get update"                                     refresh
-ok apt "sudo apt-get update && sudo apt-get dist-upgrade"        upgrade
-ok apt "sudo apt-get update && sudo apt-get dist-upgrade -y"     upgrade -y
+ok apt "sudo apt-get update; sudo apt-get dist-upgrade"        upgrade
+ok apt "sudo apt-get update; sudo apt-get dist-upgrade -y"     upgrade -y
 ok apt "dpkg --get-selections"                                   list
 ok apt "sudo apt-get autoremove"                                 orphans
 ok apt "sudo apt-get clean"                                      clean
@@ -250,7 +250,7 @@ ok pkgin "pkgin pkg-content foo"                                 files foo
 ok apt "sudo apt-get install foo"                                in foo
 ok apt "sudo apt-get remove foo"                                 rm foo
 ok apt "apt-cache search foo"                                    se foo
-ok apt "sudo apt-get update && sudo apt-get dist-upgrade"        up
+ok apt "sudo apt-get update; sudo apt-get dist-upgrade"        up
 ok apt "dpkg --get-selections"                                   list
 
 # --- flag placement and forms ----------------------------------------------
@@ -268,8 +268,8 @@ ok apt "sudo apt-get install -y bar"                             -y install -- b
 # The single-package form refreshes the index first, exactly like the
 # no-argument form (the zypper case is asserted for the Leap path; a
 # Tumbleweed host would refuse, like pacman).
-ok apt     "sudo apt-get update && sudo apt-get install --only-upgrade foo" upgrade foo
-ok apt     "sudo apt-get update && sudo apt-get install --only-upgrade -y foo" upgrade -y foo
+ok apt     "sudo apt-get update; sudo apt-get install --only-upgrade foo" upgrade foo
+ok apt     "sudo apt-get update; sudo apt-get install --only-upgrade -y foo" upgrade -y foo
 ok dnf     "sudo dnf upgrade --refresh foo"             upgrade foo
 ok dnf     "sudo dnf upgrade --refresh -y foo"          upgrade -y foo
 ok yum     "sudo yum update foo"                        upgrade foo
@@ -290,9 +290,9 @@ ok pkg     "sudo pkg upgrade -y foo"                    upgrade -y foo
 ok pkg_add "sudo pkg_add -u foo"                        upgrade foo
 ok pkgin   "sudo pkgin update && sudo pkgin install foo" upgrade foo
 ok pkgin   "sudo pkgin update && sudo pkgin -y install foo" upgrade -y foo
-ok apt     "sudo apt-get update && sudo apt-get install --only-upgrade foo bar" upgrade foo bar
-ok apt     "sudo apt-get update && sudo apt-get install --only-upgrade foo" up foo
-ok apt     "sudo apt-get update && sudo apt-get install --only-upgrade foo" upgrade -- foo
+ok apt     "sudo apt-get update; sudo apt-get install --only-upgrade foo bar" upgrade foo bar
+ok apt     "sudo apt-get update; sudo apt-get install --only-upgrade foo" up foo
+ok apt     "sudo apt-get update; sudo apt-get install --only-upgrade foo" upgrade -- foo
 
 # --- operand quoting (safe eval) -------------------------------------------
 ok apt "apt-cache show 'perl(URI)'"          info "perl(URI)"
