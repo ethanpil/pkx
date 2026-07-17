@@ -316,6 +316,8 @@ busybox `ash`, and `bash --posix`.
   cache-enabledness inside pkx made dry-run/teaching output depend on
   the machine running pkx rather than the manager, and made the test
   suite fail on Alpine itself.
+- `pkx help` fits in 80 columns again (the `--via` manager list had
+  grown into one 107-column line).
 
 ### 0.2.0 — 2026-07-14
 

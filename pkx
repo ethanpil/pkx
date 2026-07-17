@@ -48,9 +48,13 @@ shquote() {
     for _a in "$@"; do
         case $_a in
             ""|*[!A-Za-z0-9._@/:+-]*)
-                # append a sentinel before capturing so $(...) can't strip a
-                # trailing newline from the operand, then remove it
-                _e=$(printf '%sX' "$_a" | sed "s/'/'\\\\''/g"); _e=${_e%X}
+                case $_a in
+                    *"'"*)
+                        # sed escapes the embedded single quotes; the sentinel
+                        # keeps $(...) from stripping a trailing newline
+                        _e=$(printf '%sX' "$_a" | sed "s/'/'\\\\''/g"); _e=${_e%X} ;;
+                    *)  _e=$_a ;;
+                esac
                 pk="$pk '$_e'" ;;
             *)
                 pk="$pk $_a" ;;
@@ -93,7 +97,7 @@ Flags:
   -y, --yes          Assume yes on prompts
   -n, --dry-run      Print the native command without running it
   -q, --quiet        Do not print the native command before running
-      --via <mgr>    Force a manager: $SUPPORTED_MGRS
+      --via <mgr>    Force a manager (see the supported list below)
   -h, --help         Show this help
   -V, --version      Show version
 
@@ -105,6 +109,9 @@ Environment:
   PKX_MANAGER        Same as --via
   PKX_SUDO           Privilege command to prefix root operations
                      (default: sudo, then doas; set empty to disable)
+
+Supported managers (for --via / PKX_MANAGER):
+  $SUPPORTED_MGRS
 
 pkx prints the native command it is about to run, so every use teaches
 you the real command for this system. Silence it with -q.
@@ -501,15 +508,10 @@ build() {
 # ---------------------------------------------------------------------------
 
 show_which() {
-    if [ -n "$VIA" ]; then
-        mgr_source="forced via --via/PKX_MANAGER"
-    else
-        mgr_source="auto-detected"
-    fi
     print_version
-    printf 'manager:    %s (%s)\n' "$MGR" "$mgr_source"
-    if [ "$MGR" = brew ]; then
-        printf 'escalation: none (Homebrew never runs as root)\n'
+    printf 'manager:    %s (%s)\n' "$MGR" "$MGR_SOURCE"
+    if ! needs_root install; then
+        printf 'escalation: none (%s never runs as root)\n' "$MGR"
     elif [ -n "$SUDO" ]; then
         printf 'escalation: %s\n' "$SUDO"
     elif [ "$ROOT" = 1 ]; then
@@ -609,6 +611,7 @@ esac
 if [ -n "$VIA" ]; then
     MGR=$(canon_mgr "$VIA")
     [ -n "$MGR" ] || usage_err "unknown manager '$VIA' (supported: $SUPPORTED_MGRS)"
+    MGR_SOURCE="forced via --via/PKX_MANAGER"
 else
     MGR=$(detect_mgr)
     if [ -z "$MGR" ]; then
@@ -616,6 +619,7 @@ else
         warn "supported: $SUPPORTED_MGRS"
         exit 1
     fi
+    MGR_SOURCE="auto-detected"
 fi
 
 resolve_sudo

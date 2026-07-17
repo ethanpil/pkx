@@ -365,6 +365,8 @@ err --badflag install foo
 err raw
 err upgrade ""
 err install ""
+err list foo
+err which foo
 
 echo
 echo "pkx dry-run suite: $pass passed, $fail failed"
