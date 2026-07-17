@@ -21,7 +21,7 @@
 #
 # https://github.com/ethanpil/pkx
 
-PKX_VERSION="0.2.0"
+PKX_VERSION="0.3.0"
 SUPPORTED_MGRS="apt dnf yum pacman apk zypper xbps emerge brew port pkg pkg_add pkgin"
 
 # ---------------------------------------------------------------------------
@@ -109,7 +109,7 @@ Environment:
 pkx prints the native command it is about to run, so every use teaches
 you the real command for this system. Silence it with -q.
 
-Exit codes: 2 usage error, 3 command unsupported by this manager,
+Exit codes: 2 usage error, 3 operation unsupported by this manager,
 1 no manager found; otherwise the native tool's exit code.
 EOF
 }
@@ -212,7 +212,7 @@ build_apt() {
         refresh) NATIVE="${E}apt-get update" ;;
         upgrade)
             if [ -n "$pk" ]; then
-                NATIVE="${E}apt-get install --only-upgrade$y $pk"
+                NATIVE="${E}apt-get update && ${E}apt-get install --only-upgrade$y $pk"
             else
                 NATIVE="${E}apt-get update && ${E}apt-get dist-upgrade$y"
             fi ;;
@@ -232,12 +232,7 @@ build_dnf() {
         search)  NATIVE="dnf search $pk" ;;
         info)    NATIVE="dnf info $pk" ;;
         refresh) NATIVE="${E}dnf makecache" ;;
-        upgrade)
-            if [ -n "$pk" ]; then
-                NATIVE="${E}dnf upgrade$y $pk"
-            else
-                NATIVE="${E}dnf upgrade --refresh$y"
-            fi ;;
+        upgrade) NATIVE="${E}dnf upgrade --refresh$y${pk:+ $pk}" ;;
         list)    NATIVE="rpm -qa" ;;
         orphans) NATIVE="${E}dnf autoremove$y" ;;
         clean)   NATIVE="${E}dnf clean all" ;;
@@ -254,12 +249,7 @@ build_yum() {
         search)  NATIVE="yum search $pk" ;;
         info)    NATIVE="yum info $pk" ;;
         refresh) NATIVE="${E}yum makecache" ;;
-        upgrade)
-            if [ -n "$pk" ]; then
-                NATIVE="${E}yum update$y $pk"
-            else
-                NATIVE="${E}yum update$y"
-            fi ;;
+        upgrade) NATIVE="${E}yum update$y${pk:+ $pk}" ;;
         list)    NATIVE="rpm -qa" ;;
         orphans) NATIVE="${E}yum autoremove$y" ;;
         clean)   NATIVE="${E}yum clean all" ;;
@@ -278,7 +268,8 @@ build_pacman() {
         refresh) UNSUP="bare 'pacman -Sy' risks a partial upgrade that can break Arch; use 'pkx upgrade' (-Syu) instead" ;;
         upgrade)
             if [ -n "$pk" ]; then
-                UNSUP="upgrading one package on Arch is a partial upgrade and can break the system; run 'pkx upgrade' (pacman -Syu) instead"
+                UNSUP_OP="single-package upgrade"
+                UNSUP="a partial upgrade can break Arch; run 'pkx upgrade' (pacman -Syu) to upgrade everything instead"
             else
                 NATIVE="${E}pacman -Syu$y"
             fi ;;
@@ -298,12 +289,7 @@ build_apk() {
         search)  NATIVE="apk search $pk" ;;
         info)    NATIVE="apk search -e -v $pk" ;;
         refresh) NATIVE="${E}apk update" ;;
-        upgrade)
-            if [ -n "$pk" ]; then
-                NATIVE="${E}apk upgrade $pk"
-            else
-                NATIVE="${E}apk update && ${E}apk upgrade"
-            fi ;;
+        upgrade) NATIVE="${E}apk update && ${E}apk upgrade${pk:+ $pk}" ;;
         list)    NATIVE="apk info" ;;
         orphans) UNSUP="apk removes unneeded dependencies automatically when you 'pkx remove' a package" ;;
         clean)
@@ -329,12 +315,17 @@ build_zypper() {
         refresh) NATIVE="${E}zypper refresh" ;;
         upgrade)
             # Rolling Tumbleweed needs `zypper dup`; Leap/SLES use `update`.
-            if [ -n "$pk" ]; then
-                NATIVE="${E}zypper$y update $pk"
-            elif grep -qi tumbleweed /etc/os-release 2>/dev/null; then
-                NATIVE="${E}zypper refresh && ${E}zypper$y dist-upgrade"
+            # A single-package update on Tumbleweed is a partial upgrade,
+            # refused for the same reason pkx refuses it on Arch.
+            if grep -qi tumbleweed /etc/os-release 2>/dev/null; then
+                if [ -n "$pk" ]; then
+                    UNSUP_OP="single-package upgrade"
+                    UNSUP="a partial upgrade can break rolling Tumbleweed; run 'pkx upgrade' (zypper dist-upgrade) to upgrade everything instead"
+                else
+                    NATIVE="${E}zypper refresh && ${E}zypper$y dist-upgrade"
+                fi
             else
-                NATIVE="${E}zypper refresh && ${E}zypper$y update"
+                NATIVE="${E}zypper refresh && ${E}zypper$y update${pk:+ $pk}"
             fi ;;
         list)    NATIVE="zypper search --installed-only" ;;
         orphans) UNSUP="zypper has no autoremove; remove a package with its deps via 'zypper remove --clean-deps <pkg>'" ;;
@@ -352,12 +343,7 @@ build_xbps() {
         search)  NATIVE="xbps-query -Rs $pk" ;;
         info)    NATIVE="xbps-query -RS $pk" ;;
         refresh) NATIVE="${E}xbps-install -S" ;;
-        upgrade)
-            if [ -n "$pk" ]; then
-                NATIVE="${E}xbps-install -u$y $pk"
-            else
-                NATIVE="${E}xbps-install -Su$y"
-            fi ;;
+        upgrade) NATIVE="${E}xbps-install -Su$y${pk:+ $pk}" ;;
         list)    NATIVE="xbps-query -l" ;;
         orphans) NATIVE="${E}xbps-remove -o$y" ;;
         clean)   NATIVE="${E}xbps-remove -O$y" ;;
@@ -377,8 +363,9 @@ build_emerge() {
         info)    NATIVE="emerge --pretend --verbose $pk" ;;
         refresh) NATIVE="${E}emerge --sync" ;;
         upgrade)
+            # --oneshot keeps an upgraded dependency out of @world
             if [ -n "$pk" ]; then
-                NATIVE="${E}emerge --update $pk"
+                NATIVE="${E}emerge --sync && ${E}emerge --oneshot --update $pk"
             else
                 NATIVE="${E}emerge --sync && ${E}emerge --update --deep --newuse @world"
             fi ;;
@@ -398,12 +385,7 @@ build_brew() {
         search)  NATIVE="brew search $pk" ;;
         info)    NATIVE="brew info $pk" ;;
         refresh) NATIVE="brew update" ;;
-        upgrade)
-            if [ -n "$pk" ]; then
-                NATIVE="brew upgrade $pk"
-            else
-                NATIVE="brew update && brew upgrade"
-            fi ;;
+        upgrade) NATIVE="brew update && brew upgrade${pk:+ $pk}" ;;
         list)    NATIVE="brew list --versions" ;;
         orphans) NATIVE="brew autoremove" ;;
         clean)   NATIVE="brew cleanup" ;;
@@ -420,12 +402,7 @@ build_port() {
         search)  NATIVE="port search $pk" ;;
         info)    NATIVE="port info $pk" ;;
         refresh) NATIVE="${E}port sync" ;;
-        upgrade)
-            if [ -n "$pk" ]; then
-                NATIVE="${E}port$y upgrade $pk"
-            else
-                NATIVE="${E}port selfupdate && ${E}port$y upgrade outdated"
-            fi ;;
+        upgrade) NATIVE="${E}port selfupdate && ${E}port$y upgrade ${pk:-outdated}" ;;
         list)    NATIVE="port installed" ;;
         orphans) NATIVE="${E}port$y uninstall leaves" ;;
         clean)   NATIVE="${E}port clean --all installed" ;;
@@ -442,12 +419,7 @@ build_pkg() {
         search)  NATIVE="pkg search $pk" ;;
         info)    NATIVE="pkg search -f $pk" ;;
         refresh) NATIVE="${E}pkg update" ;;
-        upgrade)
-            if [ -n "$pk" ]; then
-                NATIVE="${E}pkg upgrade$y $pk"
-            else
-                NATIVE="${E}pkg upgrade$y"
-            fi ;;
+        upgrade) NATIVE="${E}pkg upgrade$y${pk:+ $pk}" ;;
         list)    NATIVE="pkg info" ;;
         orphans) NATIVE="${E}pkg autoremove$y" ;;
         clean)   NATIVE="${E}pkg clean$y" ;;
@@ -466,12 +438,7 @@ build_pkg_add() {
         search)  NATIVE="pkg_info -Q $pk" ;;
         info)    NATIVE="pkg_info -Q $pk" ;;
         refresh) UNSUP="OpenBSD has no separate index refresh; pkg_add always queries the mirrors" ;;
-        upgrade)
-            if [ -n "$pk" ]; then
-                NATIVE="${E}pkg_add -u $pk"
-            else
-                NATIVE="${E}pkg_add -u"
-            fi ;;
+        upgrade) NATIVE="${E}pkg_add -u${pk:+ $pk}" ;;
         list)    NATIVE="pkg_info" ;;
         orphans) NATIVE="${E}pkg_delete -a" ;;
         clean)   UNSUP="OpenBSD keeps no package cache to clean" ;;
@@ -490,7 +457,7 @@ build_pkgin() {
         refresh) NATIVE="${E}pkgin update" ;;
         upgrade)
             if [ -n "$pk" ]; then
-                NATIVE="${E}pkgin$y install $pk"
+                NATIVE="${E}pkgin update && ${E}pkgin$y install $pk"
             else
                 NATIVE="${E}pkgin update && ${E}pkgin$y full-upgrade"
             fi ;;
@@ -502,10 +469,13 @@ build_pkgin() {
     esac
 }
 
-# Build the native command for $1 (verb). Sets NATIVE / UNSUP.
+# Build the native command for $1 (verb). Sets NATIVE, or UNSUP (and
+# optionally UNSUP_OP, naming the refused operation when it is narrower
+# than the verb, e.g. "single-package upgrade").
 build() {
     NATIVE=""
     UNSUP=""
+    UNSUP_OP=""
     E=""
     if needs_root "$1" && [ -n "$SUDO" ]; then
         E="$SUDO "
@@ -553,8 +523,10 @@ show_which() {
         printf 'escalation: none (no sudo/doas found)\n'
     fi
     printf '\n'
-    for v in install remove search info refresh upgrade list orphans clean owns files; do
+    for v in install remove search info refresh upgrade upgrade+pkg list orphans clean owns files; do
+        label=$v
         case "$v" in
+            upgrade+pkg) v=upgrade; label="upgrade <pkg>"; pk="<pkg>" ;;
             owns) pk="<file>" ;;
             refresh|upgrade|list|orphans|clean) pk="" ;;
             search) pk="<term>" ;;
@@ -562,9 +534,9 @@ show_which() {
         esac
         build "$v"
         if [ -n "$NATIVE" ]; then
-            printf '  %-9s %s\n' "$v" "$NATIVE"
+            printf '  %-13s %s\n' "$label" "$NATIVE"
         else
-            printf '  %-9s (not supported: %s)\n' "$v" "$UNSUP"
+            printf '  %-13s (not supported: %s)\n' "$label" "$UNSUP"
         fi
     done
 }
@@ -657,9 +629,14 @@ resolve_sudo
 # validate arguments per verb
 # ---------------------------------------------------------------------------
 
+for _a in "$@"; do
+    [ -n "$_a" ] || usage_err "empty arguments are not allowed"
+done
+
 case "$verb" in
     install|remove|search|info|owns|files|raw)
         [ $# -gt 0 ] || usage_err "'$verb' needs at least one argument" ;;
+    upgrade) ;;  # no operands = upgrade everything; operands = just those
     refresh|list|orphans|clean|which)
         [ $# -eq 0 ] || usage_err "'$verb' takes no arguments" ;;
 esac
@@ -678,7 +655,8 @@ shquote "$@"
 build "$verb"
 
 if [ -z "$NATIVE" ]; then
-    warn "'$verb' is not supported for $MGR: $UNSUP"
+    [ -n "$UNSUP_OP" ] || UNSUP_OP="'$verb'"
+    warn "$UNSUP_OP is not supported for $MGR: $UNSUP"
     exit 3
 fi
 

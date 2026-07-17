@@ -115,7 +115,7 @@ command for every one of these mappings.
 | `info` | `apt-cache show` | `dnf info` | `pacman -Si` | `apk search -e -v` | `zypper info` | `brew info` |
 | `refresh` | `apt-get update` | `dnf makecache` | *refused*¹ | `apk update` | `zypper refresh` | `brew update` |
 | `upgrade` | `update && dist-upgrade` | `dnf upgrade --refresh` | `pacman -Syu` | `update && upgrade` | `refresh && update` | `update && upgrade` |
-| `upgrade <pkg>` | `install --only-upgrade` | `dnf upgrade` | *refused*⁴ | `apk upgrade` | `zypper update` | `brew upgrade` |
+| `upgrade <pkg>` | `update && install --only-upgrade` | `dnf upgrade --refresh` | *refused*⁴ | `update && upgrade` | `refresh && update`⁴ | `update && upgrade` |
 | `list` | `dpkg --get-selections` | `rpm -qa` | `pacman -Q` | `apk info` | `zypper search --installed-only` | `brew list --versions` |
 | `orphans` | `apt-get autoremove` | `dnf autoremove` | `-Rns $(pacman -Qdtq)`³ | *n/a*² | *n/a*² | `brew autoremove` |
 | `clean` | `apt-get clean` | `dnf clean all` | `pacman -Sc` | `apk cache clean` | `zypper clean --all` | `brew cleanup` |
@@ -130,7 +130,7 @@ command for every one of these mappings.
 | `info` | `yum info` | `xbps-query -RS` | `emerge -pv` | `port info` | `pkg search -f` | `pkg_info -Q` | `pkgin pkg-descr` |
 | `refresh` | `yum makecache` | `xbps-install -S` | `emerge --sync` | `port sync` | `pkg update` | *n/a*² | `pkgin update` |
 | `upgrade` | `yum update` | `xbps-install -Su` | `--sync && -uDN @world` | `selfupdate && upgrade outdated` | `pkg upgrade` | `pkg_add -u` | `update && full-upgrade` |
-| `upgrade <pkg>` | `yum update` | `xbps-install -u` | `emerge --update` | `port upgrade` | `pkg upgrade` | `pkg_add -u` | `pkgin install` |
+| `upgrade <pkg>` | `yum update` | `xbps-install -Su` | `--sync && emerge -1u` | `selfupdate && upgrade` | `pkg upgrade` | `pkg_add -u` | `update && install` |
 | `list` | `rpm -qa` | `xbps-query -l` | `qlist -Iv` | `port installed` | `pkg info` | `pkg_info` | `pkgin list` |
 | `orphans` | `yum autoremove` | `xbps-remove -o` | `emerge --depclean` | `port uninstall leaves` | `pkg autoremove` | `pkg_delete -a` | `pkgin autoremove` |
 | `clean` | `yum clean all` | `xbps-remove -O` | `eclean-dist` | `port clean --all` | `pkg clean` | *n/a*² | `pkgin clean` |
@@ -142,7 +142,8 @@ command for every one of these mappings.
 exist there — run it to see the reason.
 ³ Guarded: pkx removes the orphans only when the query returns some, so an
 empty result is a clean no-op rather than an error.
-⁴ See [Upgrading a single package](#upgrading-a-single-package) below.
+⁴ Refused on Arch always, and on openSUSE Tumbleweed (a rolling release) —
+see [Upgrading a single package](#upgrading-a-single-package) below.
 
 Meta-commands:
 
@@ -169,7 +170,8 @@ Meta-commands:
 | `PKX_MANAGER` | Same as `--via` |
 | `PKX_SUDO` | Privilege command to use for root operations. Default: plain when root, else `sudo`, else `doas`. Set it empty (`PKX_SUDO=`) to disable escalation, or e.g. `PKX_SUDO="sudo -E"` to customize. |
 
-**Exit codes:** `2` usage error, `3` verb not supported by this manager,
+**Exit codes:** `2` usage error, `3` operation not supported by this manager
+(including argument-dependent refusals, e.g. single-package upgrade on Arch),
 `1` no manager found (or a forced/detected manager whose binary is missing);
 anything else is the native tool's exit code, passed through untouched — so
 scripts can tell pkx problems from package problems.
@@ -212,17 +214,27 @@ pkx picks between them from `/etc/os-release`.
 
 ### Upgrading a single package
 
-`pkx upgrade <pkg>` upgrades only the named packages, using each manager's
-real single-package upgrade command — `brew upgrade`, `dnf upgrade`,
-`xbps-install -u`, `apt-get install --only-upgrade`, and so on. This matters
-because on Homebrew, MacPorts, xbps and OpenBSD's `pkg_add`, a plain
-*install* of an already-installed package is a no-op, so `pkx install <pkg>`
-would silently not upgrade it.
+`pkx upgrade <pkg>` refreshes the package index (exactly like the
+no-argument form, so a stale index can never hide the newest version) and
+then upgrades only the named packages, using each manager's explicit
+upgrade command — `brew upgrade`, `dnf upgrade`, `xbps-install -Su <pkg>`,
+`apt-get install --only-upgrade`, and so on. `pkx install <pkg>` is not a
+reliable substitute: on xbps and OpenBSD's `pkg_add` installing an
+already-installed package is a no-op, and on the others "install also
+upgrades" is incidental behavior rather than the command's contract.
 
-**On Arch this is refused** (exit 3). Upgrading one package on its own is a
+**Refused on rolling releases** (exit 3): upgrading one package on Arch, or
+on openSUSE Tumbleweed, is a
 [partial upgrade](https://wiki.archlinux.org/title/System_maintenance#Partial_upgrades_are_unsupported),
 which can break the system, so pkx points you at `pkx upgrade`
-(`pacman -Syu`) instead — the same fail-loudly rule as `refresh`.
+(`pacman -Syu` / `zypper dist-upgrade`) instead — the same fail-loudly rule
+as `refresh`.
+
+**Gentoo and NetBSD caveat:** portage and pkgin have no upgrade-only
+primitive, so `emerge --oneshot --update <pkg>` and `pkgin install <pkg>`
+also *install* the package when it is missing. Everywhere else an absent
+package is reported, not installed. (`--oneshot` keeps an upgraded Gentoo
+dependency out of the @world set, so `pkx orphans` can still reclaim it.)
 
 ### One verb, one meaning
 
@@ -258,6 +270,32 @@ Every cell of the verb table above is asserted there. CI additionally runs
 busybox `ash`, and `bash --posix`.
 
 ## Changelog
+
+### 0.3.0 — 2026-07-16
+
+**Changed**
+
+- `pkx upgrade <pkg>` now refreshes the package index first, exactly like
+  the no-argument form, so a stale index can no longer hide the newest
+  version (or fail outright in a fresh container).
+- Single-package upgrade is refused on openSUSE Tumbleweed (exit 3) for
+  the same partial-upgrade reason it is refused on Arch.
+- Gentoo single-package upgrade uses `emerge --oneshot --update`, so an
+  upgraded dependency is no longer permanently added to @world.
+- Exit 3 now means "operation unsupported by this manager", which covers
+  argument-dependent refusals such as single-package upgrade on Arch; the
+  refusal message names the operation instead of contradicting itself.
+
+**Fixed**
+
+- Empty operands (e.g. `pkx upgrade ""` from an unset shell variable) are
+  rejected with a usage error instead of silently building a nonsense
+  native command.
+- `pkx which` shows the `upgrade <pkg>` mapping — and its refusal on
+  Arch/Tumbleweed — instead of silently omitting the feature.
+- The README no longer claims `brew install`/`port install` of an
+  installed package is a no-op (it isn't; that claim is true only of
+  xbps and OpenBSD's `pkg_add`).
 
 ### 0.2.0 — 2026-07-14
 

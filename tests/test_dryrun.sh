@@ -265,22 +265,34 @@ ok apt "dpkg -S -x"                                              owns -- -x
 ok apt "sudo apt-get install -y bar"                             -y install -- bar
 
 # --- single-package upgrade (pkx upgrade <pkg>) -----------------------------
-ok apt     "sudo apt-get install --only-upgrade foo"    upgrade foo
-ok apt     "sudo apt-get install --only-upgrade -y foo" upgrade -y foo
-ok dnf     "sudo dnf upgrade foo"                       upgrade foo
+# The single-package form refreshes the index first, exactly like the
+# no-argument form (the zypper case is asserted for the Leap path; a
+# Tumbleweed host would refuse, like pacman).
+ok apt     "sudo apt-get update && sudo apt-get install --only-upgrade foo" upgrade foo
+ok apt     "sudo apt-get update && sudo apt-get install --only-upgrade -y foo" upgrade -y foo
+ok dnf     "sudo dnf upgrade --refresh foo"             upgrade foo
+ok dnf     "sudo dnf upgrade --refresh -y foo"          upgrade -y foo
 ok yum     "sudo yum update foo"                        upgrade foo
+ok yum     "sudo yum update -y foo"                     upgrade -y foo
 no pacman                                               upgrade foo
-ok apk     "sudo apk upgrade foo"                       upgrade foo
-ok zypper  "sudo zypper update foo"                     upgrade foo
-ok xbps    "sudo xbps-install -u foo"                   upgrade foo
-ok emerge  "sudo emerge --update foo"                   upgrade foo
-ok brew    "brew upgrade foo"                           upgrade foo
-ok port    "sudo port upgrade foo"                      upgrade foo
+ok apk     "sudo apk update && sudo apk upgrade foo"    upgrade foo
+ok zypper  "sudo zypper refresh && sudo zypper update foo" upgrade foo
+ok zypper  "sudo zypper refresh && sudo zypper --non-interactive update foo" upgrade -y foo
+ok xbps    "sudo xbps-install -Su foo"                  upgrade foo
+ok xbps    "sudo xbps-install -Su -y foo"               upgrade -y foo
+ok emerge  "sudo emerge --sync && sudo emerge --oneshot --update foo" upgrade foo
+ok brew    "brew update && brew upgrade foo"            upgrade foo
+ok brew    "brew update && brew upgrade foo bar"        upgrade foo bar
+ok port    "sudo port selfupdate && sudo port upgrade foo" upgrade foo
+ok port    "sudo port selfupdate && sudo port -N upgrade foo" upgrade -y foo
 ok pkg     "sudo pkg upgrade foo"                       upgrade foo
+ok pkg     "sudo pkg upgrade -y foo"                    upgrade -y foo
 ok pkg_add "sudo pkg_add -u foo"                        upgrade foo
-ok pkgin   "sudo pkgin install foo"                     upgrade foo
-ok apt     "sudo apt-get install --only-upgrade foo bar" upgrade foo bar
-ok apt     "sudo apt-get install --only-upgrade foo"    up foo
+ok pkgin   "sudo pkgin update && sudo pkgin install foo" upgrade foo
+ok pkgin   "sudo pkgin update && sudo pkgin -y install foo" upgrade -y foo
+ok apt     "sudo apt-get update && sudo apt-get install --only-upgrade foo bar" upgrade foo bar
+ok apt     "sudo apt-get update && sudo apt-get install --only-upgrade foo" up foo
+ok apt     "sudo apt-get update && sudo apt-get install --only-upgrade foo" upgrade -- foo
 
 # --- operand quoting (safe eval) -------------------------------------------
 ok apt "apt-cache show 'perl(URI)'"          info "perl(URI)"
@@ -319,6 +331,17 @@ case "$got" in
         fi ;;
     *) fail=$((fail + 1)); echo "FAIL which — output missing 'apt-get install': $got" ;;
 esac
+# which must show the single-package upgrade mapping...
+case "$got" in
+    *"upgrade <pkg>"*"--only-upgrade"*) pass=$((pass + 1)) ;;
+    *) fail=$((fail + 1)); echo "FAIL which — missing 'upgrade <pkg>' row: $got" ;;
+esac
+# ...and its refusal on pacman
+got=$(run_pkx pacman which 2>&1)
+case "$got" in
+    *"upgrade <pkg>"*"not supported"*) pass=$((pass + 1)) ;;
+    *) fail=$((fail + 1)); echo "FAIL which pacman — missing upgrade <pkg> refusal: $got" ;;
+esac
 
 # --- version ----------------------------------------------------------------
 # shellcheck disable=SC2086  # PKX_SH is intentionally word-split
@@ -340,6 +363,8 @@ err install
 err --via bogus install foo
 err --badflag install foo
 err raw
+err upgrade ""
+err install ""
 
 echo
 echo "pkx dry-run suite: $pass passed, $fail failed"
