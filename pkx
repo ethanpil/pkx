@@ -274,7 +274,8 @@ build_pacman() {
                 NATIVE="${E}pacman -Syu$y"
             fi ;;
         list)    NATIVE="pacman -Q" ;;
-        orphans) NATIVE="if orphans=\$(pacman -Qdtq); then ${E}pacman -Rns$y \$orphans; else echo 'pkx: no orphaned packages to remove'; fi" ;;
+        orphans) REQ=pacman
+                 NATIVE="if orphans=\$(pacman -Qdtq); then ${E}pacman -Rns$y \$orphans; else echo 'pkx: no orphaned packages to remove'; fi" ;;
         clean)   NATIVE="${E}pacman -Sc$y" ;;
         owns)    NATIVE="pacman -Qo $pk" ;;
         files)   NATIVE="pacman -Ql $pk" ;;
@@ -292,14 +293,7 @@ build_apk() {
         upgrade) NATIVE="${E}apk update && ${E}apk upgrade${pk:+ $pk}" ;;
         list)    NATIVE="apk info" ;;
         orphans) UNSUP="apk removes unneeded dependencies automatically when you 'pkx remove' a package" ;;
-        clean)
-            # Decide at build time so a real failure isn't hidden and sudo's
-            # prompt isn't swallowed: only clean when a cache is configured.
-            if [ -e /etc/apk/cache ]; then
-                NATIVE="${E}apk cache clean"
-            else
-                NATIVE="echo 'pkx: apk cache is not enabled; nothing to clean'"
-            fi ;;
+        clean)   NATIVE="${E}apk cache clean" ;;
         owns)    NATIVE="apk info --who-owns $pk" ;;
         files)   NATIVE="apk info -L $pk" ;;
     esac
@@ -369,11 +363,11 @@ build_emerge() {
             else
                 NATIVE="${E}emerge --sync && ${E}emerge --update --deep --newuse @world"
             fi ;;
-        list)    NATIVE="qlist -Iv"; REQ=qlist ;;
+        list)    NATIVE="qlist -Iv" ;;
         orphans) NATIVE="${E}emerge --depclean" ;;
-        clean)   NATIVE="${E}eclean-dist"; REQ=eclean-dist ;;
-        owns)    NATIVE="qfile $pk"; REQ=qfile ;;
-        files)   NATIVE="qlist $pk"; REQ=qlist ;;
+        clean)   NATIVE="${E}eclean-dist" ;;
+        owns)    NATIVE="qfile $pk" ;;
+        files)   NATIVE="qlist $pk" ;;
     esac
 }
 
@@ -417,7 +411,7 @@ build_pkg() {
         install) NATIVE="${E}pkg install$y $pk" ;;
         remove)  NATIVE="${E}pkg delete$y $pk" ;;
         search)  NATIVE="pkg search $pk" ;;
-        info)    NATIVE="pkg search -f $pk" ;;
+        info)    NATIVE="pkg search -e -f $pk" ;;
         refresh) NATIVE="${E}pkg update" ;;
         upgrade) NATIVE="${E}pkg upgrade$y${pk:+ $pk}" ;;
         list)    NATIVE="pkg info" ;;
@@ -436,7 +430,7 @@ build_pkg_add() {
         install) NATIVE="${E}pkg_add $pk" ;;
         remove)  NATIVE="${E}pkg_delete $pk" ;;
         search)  NATIVE="pkg_info -Q $pk" ;;
-        info)    NATIVE="pkg_info -Q $pk" ;;
+        info)    NATIVE="pkg_info $pk" ;;
         refresh) UNSUP="OpenBSD has no separate index refresh; pkg_add always queries the mirrors" ;;
         upgrade) NATIVE="${E}pkg_add -u${pk:+ $pk}" ;;
         list)    NATIVE="pkg_info" ;;
@@ -476,17 +470,11 @@ build() {
     NATIVE=""
     UNSUP=""
     UNSUP_OP=""
+    REQ=""
     E=""
     if needs_root "$1" && [ -n "$SUDO" ]; then
         E="$SUDO "
     fi
-    # REQ is the executable this verb needs; default to the manager's primary
-    # binary. Builders that shell out to a different tool override it.
-    case "$MGR" in
-        apt)  REQ=apt-get ;;
-        xbps) REQ=xbps-install ;;
-        *)    REQ=$MGR ;;
-    esac
     # raw passes args straight to the native tool (no escalation); handle it
     # once here rather than in every builder.
     if [ "$1" = raw ]; then
@@ -496,9 +484,16 @@ build() {
             apt)     NATIVE="apt-get $pk" ;;
             *)       NATIVE="$MGR $pk" ;;
         esac
-        return
+    else
+        "build_$MGR" "$1"
     fi
-    "build_$MGR" "$1"
+    # REQ is the binary the command actually invokes: its first word, after
+    # any escalation prefix. A builder whose command does not start with the
+    # binary (pacman orphans' if-compound) sets REQ itself.
+    if [ -z "$REQ" ] && [ -n "$NATIVE" ]; then
+        REQ=${NATIVE#"$E"}
+        REQ=${REQ%% *}
+    fi
 }
 
 # ---------------------------------------------------------------------------

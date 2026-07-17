@@ -127,7 +127,7 @@ command for every one of these mappings.
 | `install` | `yum install` | `xbps-install` | `emerge` | `port install` | `pkg install` | `pkg_add` | `pkgin install` |
 | `remove` | `yum remove` | `xbps-remove` | `--deselect && --depclean` | `port uninstall` | `pkg delete` | `pkg_delete` | `pkgin remove` |
 | `search` | `yum search` | `xbps-query -Rs` | `emerge --search` | `port search` | `pkg search` | `pkg_info -Q` | `pkgin search` |
-| `info` | `yum info` | `xbps-query -RS` | `emerge -pv` | `port info` | `pkg search -f` | `pkg_info -Q` | `pkgin pkg-descr` |
+| `info` | `yum info` | `xbps-query -RS` | `emerge -pv` | `port info` | `pkg search -e -f` | `pkg_info`⁵ | `pkgin pkg-descr` |
 | `refresh` | `yum makecache` | `xbps-install -S` | `emerge --sync` | `port sync` | `pkg update` | *n/a*² | `pkgin update` |
 | `upgrade` | `yum update` | `xbps-install -Su` | `--sync && -uDN @world` | `selfupdate && upgrade outdated` | `pkg upgrade` | `pkg_add -u` | `update && full-upgrade` |
 | `upgrade <pkg>` | `yum update` | `xbps-install -Su` | `--sync && emerge -1u` | `selfupdate && upgrade` | `pkg upgrade` | `pkg_add -u` | `update && install` |
@@ -140,10 +140,13 @@ command for every one of these mappings.
 ¹ See [pacman and `refresh`](#pacman-and-refresh) below.
 ² Exits with code 3 and a one-line explanation of why the operation doesn't
 exist there — run it to see the reason.
-³ Guarded: pkx removes the orphans only when the query returns some, so an
-empty result is a clean no-op rather than an error.
+³ Guarded: the removal runs only when `pacman -Qdtq` succeeds and reports
+orphans; otherwise pkx prints a notice and exits 0 (a failed query still
+shows pacman's own error on stderr).
 ⁴ Refused on Arch always, and on openSUSE Tumbleweed (a rolling release) —
 see [Upgrading a single package](#upgrading-a-single-package) below.
+⁵ Details for installed packages only; OpenBSD has no repo-details command,
+so use `pkx search` for repository lookup.
 
 Meta-commands:
 
@@ -211,6 +214,11 @@ pkx picks between them from `/etc/os-release`.
 `pkx orphans` on **yum** uses `yum autoremove`, which exists on yum ≥ 3.4.3
 (RHEL/CentOS 7+). On the much older yum of RHEL/CentOS 6 there is no
 `autoremove`, and the command will report that.
+
+`pkx clean` on **Alpine** runs `apk cache clean`, which errors if no local
+package cache is configured (the default on minimal installs and the
+official Docker image) — that is apk itself telling you there is nothing
+to clean.
 
 ### Upgrading a single package
 
@@ -296,6 +304,18 @@ busybox `ash`, and `bash --posix`.
 - The README no longer claims `brew install`/`port install` of an
   installed package is a no-op (it isn't; that claim is true only of
   xbps and OpenBSD's `pkg_add`).
+- The pre-run binary check verifies the binary the command actually
+  invokes (`dpkg`, `rpm`, `xbps-query`, `pkg_info`, ...) rather than the
+  manager's primary binary, restoring the guarantee for every helper-tool
+  verb instead of only Gentoo's.
+- `info` on FreeBSD uses `pkg search -e -f` (exact match, full output)
+  instead of dumping every substring match; on OpenBSD it is `pkg_info`
+  again — real details, installed packages only — since OpenBSD has no
+  repo-details command.
+- `clean` on Alpine emits plain `apk cache clean` again; deciding
+  cache-enabledness inside pkx made dry-run/teaching output depend on
+  the machine running pkx rather than the manager, and made the test
+  suite fail on Alpine itself.
 
 ### 0.2.0 — 2026-07-14
 

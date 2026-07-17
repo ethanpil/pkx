@@ -130,7 +130,7 @@ ok apk "sudo apk update"                                         refresh
 ok apk "sudo apk update && sudo apk upgrade"                     upgrade
 ok apk "apk info"                                                list
 no apk orphans
-ok apk "echo 'pkx: apk cache is not enabled; nothing to clean'" clean
+ok apk "sudo apk cache clean"                                    clean
 ok apk "apk info --who-owns /bin/ls"                             owns /bin/ls
 ok apk "apk info -L foo"                                         files foo
 
@@ -208,7 +208,7 @@ ok pkg "sudo pkg install foo"                                    install foo
 ok pkg "sudo pkg install -y foo"                                 install -y foo
 ok pkg "sudo pkg delete foo"                                     remove foo
 ok pkg "pkg search foo"                                          search foo
-ok pkg "pkg search -f foo"                                       info foo
+ok pkg "pkg search -e -f foo"                                    info foo
 ok pkg "sudo pkg update"                                         refresh
 ok pkg "sudo pkg upgrade"                                        upgrade
 ok pkg "pkg info"                                                list
@@ -222,7 +222,7 @@ ok pkg_add "sudo pkg_add foo"                                    install foo
 ok pkg_add "sudo pkg_add foo"                                    install -y foo
 ok pkg_add "sudo pkg_delete foo"                                 remove foo
 ok pkg_add "pkg_info -Q foo"                                     search foo
-ok pkg_add "pkg_info -Q foo"                                     info foo
+ok pkg_add "pkg_info foo"                                        info foo
 no pkg_add refresh
 ok pkg_add "sudo pkg_add -u"                                     upgrade
 ok pkg_add "pkg_info"                                            list
