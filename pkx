@@ -47,7 +47,9 @@ shquote() {
     pk=""
     for _a in "$@"; do
         case $_a in
-            ""|*[!A-Za-z0-9._@/:+-]*)
+            # the safe set is spelled out (no a-z ranges) so classification
+            # cannot vary with the caller's locale collation
+            ""|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._@/:+-]*)
                 case $_a in
                     *"'"*)
                         # sed escapes the embedded single quotes; the sentinel
@@ -703,7 +705,10 @@ if needs_root "$verb" && [ "$ROOT" = 0 ] && [ -z "$SUDO" ]; then
     warn "warning: not running as root and no sudo/doas found; trying anyway"
 fi
 
-[ "$QUIET" = 1 ] || printf 'pkx: running: %s\n' "$NATIVE" >&2
+# The teaching line is display output: strip control bytes (keeping tab)
+# so escape sequences in an operand cannot repaint what the user reads.
+# Dry-run output stays byte-exact, since it may be consumed by scripts.
+[ "$QUIET" = 1 ] || printf 'pkx: running: %s\n' "$NATIVE" | tr -d '\000-\010\013-\037' >&2
 
 eval "$NATIVE"
 exit $?

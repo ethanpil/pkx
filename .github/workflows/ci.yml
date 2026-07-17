@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -14,12 +18,15 @@ jobs:
       # (SC2317 -> SC2329), so an unpinned version makes the disable
       # directives in pkx version-dependent.
       SHELLCHECK_VERSION: v0.11.0
+      SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install shellcheck ${{ env.SHELLCHECK_VERSION }}
         run: |
           curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" \
-            | tar -xJf -
+            -o shellcheck.tar.xz
+          echo "${SHELLCHECK_SHA256}  shellcheck.tar.xz" | sha256sum -c -
+          tar -xJf shellcheck.tar.xz
           sudo install "shellcheck-${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
           shellcheck --version
       - name: Install checkbashisms
@@ -32,7 +39,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install shells
         run: sudo apt-get update && sudo apt-get install -y dash busybox
       - name: Test under dash (Ubuntu /bin/sh)
@@ -41,3 +48,12 @@ jobs:
         run: PKX_SH="busybox sh" sh tests/test_dryrun.sh
       - name: Test under bash --posix
         run: PKX_SH="bash --posix" sh tests/test_dryrun.sh
+
+  test-macos:
+    # macOS /bin/sh is bash 3.2 in POSIX mode with BSD userland (BSD sed),
+    # both of which the Linux jobs never exercise.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Test under macOS /bin/sh
+        run: sh tests/test_dryrun.sh
