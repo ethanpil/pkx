@@ -21,7 +21,7 @@
 #
 # https://github.com/ethanpil/pkx
 
-PKX_VERSION="0.3.0"
+PKX_VERSION="0.4.0"
 SUPPORTED_MGRS="apt dnf yum pacman apk zypper xbps emerge brew port pkg pkg_add pkgin"
 
 # ---------------------------------------------------------------------------
@@ -125,7 +125,8 @@ pkx prints the native command it is about to run, so every use teaches
 you the real command for this system. Silence it with -q.
 
 Exit codes: 2 usage error, 3 operation unsupported by this manager,
-1 no manager found; otherwise the native tool's exit code.
+1 no manager found or a required binary missing; otherwise the native
+tool's exit code.
 EOF
 }
 
@@ -701,6 +702,13 @@ else
     MGR=$(detect_mgr)
     if [ -z "$MGR" ]; then
         warn "no supported package manager found on this system"
+        if has rpm-ostree; then
+            warn "this looks like an image-based system: use 'rpm-ostree install <pkg>' directly"
+        elif has transactional-update; then
+            warn "this looks like openSUSE MicroOS: use 'transactional-update pkg install <pkg>'"
+        elif has nix-env || has nix; then
+            warn "this looks like Nix: use 'nix profile install' or 'nix-env -iA'"
+        fi
         warn "supported: $SUPPORTED_MGRS"
         exit 1
     fi
@@ -766,7 +774,9 @@ if ! has "$REQ"; then
     exit 1
 fi
 
-if needs_root "$verb" && [ "$ROOT" = 0 ] && [ -z "$SUDO" ]; then
+# Termux is rootless by design (its apt installs into the app prefix), so
+# the no-root warning would cry wolf on every operation there.
+if needs_root "$verb" && [ "$ROOT" = 0 ] && [ -z "$SUDO" ] && [ -z "${TERMUX_VERSION:-}" ]; then
     warn "warning: not running as root and no sudo/doas found; trying anyway"
 fi
 

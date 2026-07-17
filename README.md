@@ -36,22 +36,30 @@ teaches you the actual command for the box you're on.
 
 ## Install
 
-One file, no dependencies:
+One file, no dependencies. Pin the released version:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/ethanpil/pkx/main/pkx -o /usr/local/bin/pkx
+curl -fsSL https://raw.githubusercontent.com/ethanpil/pkx/v0.4.0/pkx -o /usr/local/bin/pkx
 chmod +x /usr/local/bin/pkx
 ```
 
-or with wget:
+Verify the download (sha256 of the released `pkx` file):
 
 ```sh
-wget -qO /usr/local/bin/pkx https://raw.githubusercontent.com/ethanpil/pkx/main/pkx
+echo "7bff46176a7779025a6341c667aed4fd2091814c4899f9b427264874d9fd1918  /usr/local/bin/pkx" | sha256sum -c -
+```
+
+or with wget, or tracking the latest development version:
+
+```sh
+wget -qO /usr/local/bin/pkx https://raw.githubusercontent.com/ethanpil/pkx/v0.4.0/pkx
+curl -fsSL https://raw.githubusercontent.com/ethanpil/pkx/main/pkx -o /usr/local/bin/pkx   # latest, unpinned
 chmod +x /usr/local/bin/pkx
 ```
 
 (Use `sudo` for `/usr/local/bin`, or drop it anywhere on your `PATH`, e.g.
-`~/.local/bin`.) Verify with:
+`~/.local/bin`. Uninstall by deleting that one file:
+`sudo rm /usr/local/bin/pkx`.) Verify with:
 
 ```sh
 pkx which
@@ -69,7 +77,9 @@ pkx search terminal        # search the repos
 pkx info tmux              # package details
 pkx upgrade                # refresh index + upgrade everything
 pkx upgrade htop           # upgrade just one package
+pkx outdated               # what has an upgrade available?
 pkx list                   # installed packages
+pkx installed tmux         # is it installed? (exit 0 = yes)
 pkx owns /usr/bin/vim      # which package owns this file?
 pkx files tmux             # which files did this package install?
 pkx orphans                # remove no-longer-needed dependencies
@@ -114,8 +124,10 @@ command for every one of these mappings.
 | `search` | `apt-cache search` | `dnf search` | `pacman -Ss` | `apk search` | `zypper search` | `brew search` |
 | `info` | `apt-cache show` | `dnf info` | `pacman -Si` | `apk search -e -v` | `zypper info` | `brew info` |
 | `refresh` | `apt-get update` | `dnf makecache` | *refused*¹ | `apk update` | `zypper refresh` | `brew update` |
-| `upgrade` | `update && dist-upgrade` | `dnf upgrade --refresh` | `pacman -Syu` | `update && upgrade` | `refresh && update` | `update && upgrade` |
-| `upgrade <pkg>` | `update && install --only-upgrade` | `dnf upgrade --refresh` | *refused*⁴ | `update && upgrade` | `refresh && update`⁴ | `update && upgrade` |
+| `upgrade` | `update; dist-upgrade` | `dnf upgrade --refresh` | `pacman -Syu` | `update && upgrade` | `refresh && update` | `update && upgrade` |
+| `upgrade <pkg>` | `update; install --only-upgrade` | `dnf upgrade --refresh` | *refused*⁴ | `update && upgrade` | `refresh && update`⁴ | `update && upgrade` |
+| `outdated` | `apt list --upgradable` | `dnf check-update`⁶ | `pacman -Qu`⁶ | `apk list -u` | `zypper list-updates` | `brew outdated` |
+| `installed` | `dpkg -s` | `rpm -q` | `pacman -Q` | `apk info -e` | `rpm -q` | `brew list --versions` |
 | `list` | `apt list --installed` | `rpm -qa` | `pacman -Q` | `apk list --installed` | `zypper search --installed-only` | `brew list --versions` |
 | `orphans` | `apt-get autoremove` | `dnf autoremove` | `-Rns $(pacman -Qdtq)`³ | *n/a*² | *n/a*² | `brew autoremove` |
 | `clean` | `apt-get clean` | `dnf clean all` | `pacman -Sc` | `apk cache clean` | `zypper clean --all` | `brew cleanup` |
@@ -131,6 +143,8 @@ command for every one of these mappings.
 | `refresh` | `yum makecache` | `xbps-install -S` | `emerge --sync` | `port sync` | `pkg update` | *n/a*² | `pkgin update` |
 | `upgrade` | `yum update` | `xbps-install -Su` | `--sync && -uDN @world` | `selfupdate && upgrade outdated` | `pkg upgrade` | `pkg_add -u` | `update && full-upgrade` |
 | `upgrade <pkg>` | `yum update` | `xbps-install -Su` | `--sync && emerge -1u` | `selfupdate && upgrade` | `pkg upgrade` | `pkg_add -u` | `update && install` |
+| `outdated` | `yum check-update`⁶ | `xbps-install -un` | `emerge -puDN @world` | `port outdated` | `pkg version -vRL=` | `pkg_add -un` | *n/a*² |
+| `installed` | `rpm -q` | `xbps-query -S` | `qlist -I` | `port -q installed \| grep .` | `pkg info` | `pkg_info -e` | `pkg_info -e` |
 | `list` | `rpm -qa` | `xbps-query -l` | `qlist -Iv` | `port installed` | `pkg info` | `pkg_info` | `pkgin list` |
 | `orphans` | `yum autoremove` | `xbps-remove -o` | `emerge --depclean` | `port uninstall leaves` | `pkg autoremove` | `pkg_delete -a` | `pkgin autoremove` |
 | `clean` | `yum clean all` | `xbps-remove -O` | `eclean-dist` | `port clean --all` | `pkg clean` | *n/a*² | `pkgin clean` |
@@ -147,15 +161,19 @@ shows pacman's own error on stderr).
 see [Upgrading a single package](#upgrading-a-single-package) below.
 ⁵ Details for installed packages only; OpenBSD has no repo-details command,
 so use `pkx search` for repository lookup.
+⁶ Native exit-code quirks pass through: `dnf`/`yum check-update` exits 100
+when updates exist, and `pacman -Qu` exits 1 when there are none.
 
 Meta-commands:
 
-- `pkx which` — print the detected manager, the escalation command, and every
-  verb mapping for this system.
+- `pkx which [verb]` — print the detected manager, the escalation command,
+  the aliases, and every verb mapping for this system (or just one verb's).
 - `pkx raw -- <args>` — escape hatch: pass args straight to the native tool
   (`pkx raw -- -Syu` on Arch runs `pacman -Syu`). No sudo is added — you're
-  in manual mode. Unsupported on xbps and OpenBSD's pkg_add, whose operations
-  are split across several separate binaries (exit 3 — call them directly).
+  in manual mode. On Debian/Ubuntu the target is `apt-get`, not `apt`, so
+  apt-only subcommands like `list` won't work through raw. Unsupported on
+  xbps and OpenBSD's pkg_add, whose operations are split across several
+  separate binaries (exit 3 — call them directly).
 
 ## Flags and environment
 
@@ -171,7 +189,8 @@ Meta-commands:
 | Variable | Meaning |
 |---|---|
 | `PKX_MANAGER` | Same as `--via` |
-| `PKX_SUDO` | Privilege command to use for root operations. Default: plain when root, else `sudo`, else `doas`. Set it empty (`PKX_SUDO=`) to disable escalation, or e.g. `PKX_SUDO="sudo -E"` to customize. |
+| `PKX_SUDO` | Privilege command to use for root operations. Default: plain when root, else `sudo`, else `doas`. Set it empty (`PKX_SUDO=`) to disable escalation, or e.g. `PKX_SUDO="sudo -E"` to customize. Treat it as trusted as your shell: it is executed as given. |
+| `PKX_QUIET` | Set non-empty to silence teaching mode persistently (same as `-q`) |
 
 **Exit codes:** `2` usage error, `3` operation not supported by this manager
 (including argument-dependent refusals, e.g. single-package upgrade on Arch),
@@ -219,6 +238,35 @@ pkx picks between them from `/etc/os-release`.
 package cache is configured (the default on minimal installs and the
 official Docker image) — that is apk itself telling you there is nothing
 to clean.
+
+`pkx upgrade` on **Debian/Ubuntu** joins the two steps with `;` rather than
+`&&`: `apt-get update` exits non-zero on a benign partial refresh (one dead
+PPA) even though the usable lists updated, and blocking security upgrades
+on that would be worse than proceeding.
+
+`pkx owns <file>` works best with a **full path** (`pkx owns /usr/bin/vim`).
+dpkg and pacman resolve bare names, but `rpm -qf`, MacPorts, FreeBSD `pkg
+which` and xbps need the real path — and xbps in particular matches
+patterns silently, so a bare name simply produces no output.
+
+`pkx orphans` on **Arch** prints a small shell conditional as the command
+it runs — that's pkx's own guard (remove only if the query found orphans),
+since bare `pacman -Rns` with no targets errors. The pacman parts inside
+it are the real commands.
+
+On **Termux**, pkx maps to apt and skips the not-running-as-root warning:
+Termux is rootless by design.
+
+**Image-based and declarative systems** (Fedora Silverblue's rpm-ostree,
+openSUSE MicroOS's transactional-update, NixOS) are deliberately out of
+scope — mutating them per-package doesn't fit the verb model. pkx detects
+them and points you at the native command instead of a bare failure.
+
+**PATH and escalation:** pkx resolves manager binaries via your `PATH` and
+relies on `sudo`'s `secure_path` (default on) for the escalated command.
+If you use `PKX_SUDO="sudo -E"` or a `doas` config that keeps the
+environment, make sure your `PATH` contains no world-writable or relative
+entries.
 
 ### Upgrading a single package
 
@@ -278,6 +326,60 @@ Every cell of the verb table above is asserted there. CI additionally runs
 busybox `ash`, and `bash --posix`.
 
 ## Changelog
+
+### 0.4.0 — 2026-07-16
+
+**Added**
+
+- `pkx outdated` — read-only list of packages with available upgrades,
+  on 12 of 13 managers (pkgin has no separate listing and says so).
+  This restores the most common read-only query, present in the
+  original gist as `paccheckforupdates` and dropped in the rewrite.
+- `pkx installed <pkg>...` — portable is-it-installed predicate
+  (exit 0 = installed), the other query the original gist had
+  (`pacinstalled`) that scripts previously had to fake by grepping
+  `pkx list`.
+- `pkx which <verb>` — look up a single mapping (aliases accepted);
+  the full `which` table now also shows the verb aliases.
+- `PKX_QUIET` environment variable — persistent `-q`.
+- A dashed operand now gets a native `--` end-of-options marker, so
+  `pkx remove -- -foo` really does protect the name (raw exempt).
+- Release installs are tag-pinned with a published sha256.
+
+**Fixed**
+
+- An explicit but empty `--via` value errors instead of silently
+  auto-detecting — a script whose manager variable expanded empty was
+  running privileged operations against the wrong manager.
+- `-h`/`-V` combined with a command now error; `pkx -V install htop`
+  used to print the version and exit 0 with the install silently
+  discarded.
+- apt upgrades no longer abort on a benign partial index refresh (one
+  dead PPA): the update and upgrade steps are joined with `;`, matching
+  what apt itself does with stale lists.
+- zypper warns instead of silently assuming non-rolling when
+  `/etc/os-release` is unreadable (the Tumbleweed check used to fail
+  open into a partial upgrade).
+- `list` on apt/Alpine is installed-only with versions
+  (`apt list --installed`, `apk list --installed`) instead of
+  dpkg selections (which include removed-but-not-purged packages) and
+  bare names.
+- Teaching-mode output strips control bytes, so terminal escape
+  sequences in an operand can't repaint the displayed command; the
+  shell-quoting safe-set is spelled out so it cannot vary with locale.
+- Bare `pkx` prints a two-line hint instead of the full usage dump.
+- Termux no longer sees a spurious not-running-as-root warning, and
+  image-based systems (rpm-ostree, MicroOS, NixOS) get a pointer to
+  their native tool instead of a bare "no manager found".
+
+**Internal**
+
+- CI: sha256-verified pinned shellcheck, actions pinned to commit SHAs,
+  superseded runs cancelled, and a macOS job (BSD sed + bash-3.2
+  /bin/sh). The test suite grew to 268 assertions and now also
+  executes pkx against stub binaries, covering the teaching line, `-q`,
+  native exit-code passthrough, and the missing-binary guard; refusal
+  messages are asserted by content.
 
 ### 0.3.0 — 2026-07-16
 
