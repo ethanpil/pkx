@@ -35,8 +35,8 @@ ok() {
     else
         fail=$((fail + 1))
         echo "FAIL [$mgr] pkx $*"
-        echo "  expected: $expected"
-        echo "  got (rc=$rc): $got"
+        printf '  expected: %s\n' "$expected"
+        printf '  got (rc=%s): %s\n' "$rc" "$got"
     fi
 }
 
@@ -83,7 +83,7 @@ ok apt "sudo apt-get update"                                     refresh
 ok apt "sudo apt-get update; sudo apt-get dist-upgrade"        upgrade
 ok apt "sudo apt-get update; sudo apt-get dist-upgrade -y"     upgrade -y
 ok apt "apt list --installed"                                    list
-ok apt "sudo apt-get autoremove"                                 orphans
+ok apt "sudo apt-get autoremove"                                 autoremove
 ok apt "sudo apt-get clean"                                      clean
 ok apt "dpkg -S /bin/ls"                                         owns /bin/ls
 ok apt "dpkg -L foo"                                             files foo
@@ -99,7 +99,7 @@ ok dnf "sudo dnf makecache"                                      refresh
 ok dnf "sudo dnf upgrade --refresh"                              upgrade
 ok dnf "sudo dnf upgrade --refresh -y"                           upgrade -y
 ok dnf "rpm -qa"                                                 list
-ok dnf "sudo dnf autoremove"                                     orphans
+ok dnf "sudo dnf autoremove"                                     autoremove
 ok dnf "sudo dnf clean all"                                      clean
 ok dnf "rpm -qf /bin/ls"                                         owns /bin/ls
 ok dnf "rpm -ql foo"                                             files foo
@@ -113,14 +113,14 @@ ok yum "yum info foo"                                            info foo
 ok yum "sudo yum makecache"                                      refresh
 ok yum "sudo yum update"                                         upgrade
 ok yum "rpm -qa"                                                 list
-ok yum "sudo yum autoremove"                                     orphans
+ok yum "sudo yum autoremove"                                     autoremove
 ok yum "sudo yum clean all"                                      clean
 ok yum "rpm -qf /bin/ls"                                         owns /bin/ls
 ok yum "rpm -ql foo"                                             files foo
 
 # --- pacman ----------------------------------------------------------------
-ok pacman "sudo pacman -S foo"                                   install foo
-ok pacman "sudo pacman -S --noconfirm foo"                       install -y foo
+ok pacman "sudo pacman -S --needed foo"                                   install foo
+ok pacman "sudo pacman -S --needed --noconfirm foo"                       install -y foo
 ok pacman "sudo pacman -Rns foo"                                 remove foo
 ok pacman "pacman -Ss foo"                                       search foo
 ok pacman "pacman -Si foo"                                       info foo
@@ -128,7 +128,7 @@ no pacman "partial upgrade" refresh
 ok pacman "sudo pacman -Syu"                                     upgrade
 ok pacman "sudo pacman -Syu --noconfirm"                         upgrade -y
 ok pacman "pacman -Q"                                            list
-ok pacman "if orphans=\$(pacman -Qdtq); then sudo pacman -Rns \$orphans; else echo 'pkx: no orphaned packages to remove'; fi" orphans
+ok pacman "if orphans=\$(pacman -Qdtq); then sudo pacman -Rns \$orphans; else echo 'pkx: no orphaned packages to remove'; fi" autoremove
 ok pacman "sudo pacman -Sc"                                      clean
 ok pacman "pacman -Qo /bin/ls"                                   owns /bin/ls
 ok pacman "pacman -Ql foo"                                       files foo
@@ -142,7 +142,7 @@ ok apk "apk search -e -v foo"                                    info foo
 ok apk "sudo apk update"                                         refresh
 ok apk "sudo apk update && sudo apk upgrade"                     upgrade
 ok apk "apk list --installed"                                    list
-no apk "automatically" orphans
+no apk "automatically" autoremove
 ok apk "sudo apk cache clean"                                    clean
 ok apk "apk info --who-owns /bin/ls"                             owns /bin/ls
 ok apk "apk info -L foo"                                         files foo
@@ -162,7 +162,7 @@ else
     ok zypper "sudo zypper refresh && sudo zypper update"        upgrade
 fi
 ok zypper "zypper search --installed-only"                       list
-no zypper "clean-deps" orphans
+no zypper "clean-deps" autoremove
 ok zypper "sudo zypper clean --all"                              clean
 ok zypper "rpm -qf /bin/ls"                                      owns /bin/ls
 ok zypper "rpm -ql foo"                                          files foo
@@ -176,7 +176,7 @@ ok xbps "xbps-query -RS foo"                                     info foo
 ok xbps "sudo xbps-install -S"                                   refresh
 ok xbps "sudo xbps-install -Su"                                  upgrade
 ok xbps "xbps-query -l"                                          list
-ok xbps "sudo xbps-remove -o"                                    orphans
+ok xbps "sudo xbps-remove -o"                                    autoremove
 ok xbps "sudo xbps-remove -O"                                    clean
 ok xbps "xbps-query -o /bin/ls"                                  owns /bin/ls
 ok xbps "xbps-query -f foo"                                      files foo
@@ -190,7 +190,7 @@ ok emerge "emerge --pretend --verbose foo"                       info foo
 ok emerge "sudo emerge --sync"                                   refresh
 ok emerge "sudo emerge --sync && sudo emerge --update --deep --newuse @world" upgrade
 ok emerge "qlist -Iv"                                            list
-ok emerge "sudo emerge --depclean"                               orphans
+ok emerge "sudo emerge --depclean"                               autoremove
 ok emerge "sudo eclean-dist"                                     clean
 ok emerge "qfile /bin/ls"                                        owns /bin/ls
 ok emerge "qlist foo"                                            files foo
@@ -203,7 +203,7 @@ ok brew "brew info foo"                                          info foo
 ok brew "brew update"                                            refresh
 ok brew "brew update && brew upgrade"                            upgrade
 ok brew "brew list --versions"                                   list
-ok brew "brew autoremove"                                        orphans
+ok brew "brew autoremove"                                        autoremove
 ok brew "brew cleanup"                                           clean
 no brew "cannot map" owns /bin/ls
 ok brew "brew list --verbose foo"                                files foo
@@ -217,7 +217,7 @@ ok port "port info foo"                                          info foo
 ok port "sudo port sync"                                         refresh
 ok port "sudo port selfupdate && sudo port upgrade outdated"     upgrade
 ok port "port installed"                                         list
-ok port "sudo port uninstall leaves"                             orphans
+ok port "sudo port uninstall leaves"                             autoremove
 ok port "sudo port clean --all installed"                        clean
 ok port "port provides /bin/ls"                                  owns /bin/ls
 ok port "port contents foo"                                      files foo
@@ -231,21 +231,24 @@ ok pkg "pkg search -e -f foo"                                    info foo
 ok pkg "sudo pkg update"                                         refresh
 ok pkg "sudo pkg upgrade"                                        upgrade
 ok pkg "pkg info"                                                list
-ok pkg "sudo pkg autoremove"                                     orphans
+ok pkg "sudo pkg autoremove"                                     autoremove
 ok pkg "sudo pkg clean"                                          clean
 ok pkg "pkg which /bin/ls"                                       owns /bin/ls
 ok pkg "pkg info -l foo"                                         files foo
 
 # --- pkg_add (OpenBSD) -----------------------------------------------------
 ok pkg_add "sudo pkg_add foo"                                    install foo
-ok pkg_add "sudo pkg_add foo"                                    install -y foo
+ok pkg_add "sudo pkg_add -I foo"                                 install -y foo
+ok pkg_add "sudo pkg_delete -I foo"                              remove -y foo
+ok pkg_add "sudo pkg_add -I -u"                                  upgrade -y
+ok pkg_add "sudo pkg_delete -I -a"                               autoremove -y
 ok pkg_add "sudo pkg_delete foo"                                 remove foo
 ok pkg_add "pkg_info -Q foo"                                     search foo
 ok pkg_add "pkg_info foo"                                        info foo
 no pkg_add "index refresh" refresh
 ok pkg_add "sudo pkg_add -u"                                     upgrade
 ok pkg_add "pkg_info"                                            list
-ok pkg_add "sudo pkg_delete -a"                                  orphans
+ok pkg_add "sudo pkg_delete -a"                                  autoremove
 no pkg_add "no package cache" clean
 ok pkg_add "pkg_info -E /bin/ls"                                 owns /bin/ls
 ok pkg_add "pkg_info -L foo"                                     files foo
@@ -260,7 +263,7 @@ ok pkgin "pkgin pkg-descr foo"                                   info foo
 ok pkgin "sudo pkgin update"                                     refresh
 ok pkgin "sudo pkgin update && sudo pkgin full-upgrade"          upgrade
 ok pkgin "pkgin list"                                            list
-ok pkgin "sudo pkgin autoremove"                                 orphans
+ok pkgin "sudo pkgin autoremove"                                 autoremove
 ok pkgin "sudo pkgin clean"                                      clean
 ok pkgin "pkg_info -Fe /bin/ls"                                  owns /bin/ls
 ok pkgin "pkgin pkg-content foo"                                 files foo
@@ -275,15 +278,15 @@ ok apt "apt list --installed"                                    list
 # --- flag placement and forms ----------------------------------------------
 ok apt "sudo apt-get install -y foo"                             install foo -y
 ok apt "sudo apt-get install -y foo"                             -y install foo
-ok pacman "sudo pacman -S foo"                                   --via pacman install foo
-ok pacman "sudo pacman -S foo"                                   --via=arch install foo
+ok pacman "sudo pacman -S --needed foo"                                   --via pacman install foo
+ok pacman "sudo pacman -S --needed foo"                                   --via=arch install foo
 
 # --- end-of-options (--) ----------------------------------------------------
 # A dashed operand now also gets a native '--' so the tool sees a name.
 ok apt "sudo apt-get remove -- -foo"                             remove -- -foo
 ok apt "dpkg -S -- -x"                                           owns -- -x
 ok apt "sudo apt-get install -y bar"                             -y install -- bar
-ok pacman "sudo pacman -S -- -foo"                               install -- -foo
+ok pacman "sudo pacman -S --needed -- -foo"                               install -- -foo
 
 # --- single-package upgrade (pkx upgrade <pkg>) -----------------------------
 # The single-package form refreshes the index first, exactly like the
@@ -301,8 +304,10 @@ if ! grep -qi tumbleweed /etc/os-release 2>/dev/null; then
     ok zypper "sudo zypper refresh && sudo zypper update foo" upgrade foo
     ok zypper "sudo zypper refresh && sudo zypper --non-interactive update foo" upgrade -y foo
 fi
-ok xbps    "sudo xbps-install -Su foo"                  upgrade foo
-ok xbps    "sudo xbps-install -Su -y foo"               upgrade -y foo
+# xbps would install a missing package, so each one is checked first
+ok xbps    "xbps-query -p pkgver foo && sudo xbps-install -Su foo" upgrade foo
+ok xbps    "xbps-query -p pkgver foo && sudo xbps-install -Su -y foo" upgrade -y foo
+ok xbps    "xbps-query -p pkgver foo && xbps-query -p pkgver bar && sudo xbps-install -Su foo bar" upgrade foo bar
 ok emerge  "sudo emerge --sync && sudo emerge --oneshot --update foo" upgrade foo
 ok brew    "brew update && brew upgrade foo"            upgrade foo
 ok brew    "brew update && brew upgrade foo bar"        upgrade foo bar
@@ -330,23 +335,67 @@ ok brew    "brew outdated"                               outdated
 ok port    "port outdated"                               outdated
 ok pkg     "pkg version -vRL="                           outdated
 ok pkg_add "pkg_add -un"                                 outdated
-no pkgin   "answer no"                                   outdated
+no pkgin   "full-upgrade"                                outdated
 
-# --- installed (is this package installed?) ----------------------------------
-ok apt     "dpkg -s foo"                                 installed foo
+# --- list <pkg> (is this package installed? exit 0 = all installed) ------
+# apt checks the status field: 'dpkg -s' exits 0 for a removed package whose
+# config files remain. Tools whose check takes one argument run per operand.
+APTQ="dpkg-query -W -f='\${Package} \${Version} \${db:Status-Status}\\n'"
+ok apt     "$APTQ foo | grep ' installed\$'"            list foo
+ok apt     "$APTQ foo | grep ' installed\$' && $APTQ bar | grep ' installed\$'" list foo bar
+ok dnf     "rpm -q foo"                                  list foo
+ok yum     "rpm -q foo"                                  list foo
+ok pacman  "pacman -Q foo"                               list foo
+ok apk     "apk info -e foo"                             list foo
+ok zypper  "rpm -q foo"                                  list foo
+ok xbps    "xbps-query -p pkgver foo"                    list foo
+ok xbps    "xbps-query -p pkgver foo && xbps-query -p pkgver bar" list foo bar
+ok emerge  "qlist -Iv foo"                               list foo
+ok brew    "brew list --versions foo"                    list foo
+ok port    "port -q installed foo | grep ."              list foo
+ok port    "port -q installed foo | grep . && port -q installed bar | grep ." list foo bar
+ok pkg     "pkg info foo"                                list foo
+ok pkg_add "pkg_info -e foo"                             list foo
+ok pkg_add "pkg_info -e foo && pkg_info -e bar"          list foo bar
+ok pkgin   "pkg_info -e foo"                             list foo
+# 'installed' is an alias of list (with and without operands)
 ok dnf     "rpm -q foo"                                  installed foo
-ok yum     "rpm -q foo"                                  installed foo
-ok pacman  "pacman -Q foo"                               installed foo
-ok apk     "apk info -e foo"                             installed foo
-ok zypper  "rpm -q foo"                                  installed foo
-ok xbps    "xbps-query -S foo"                           installed foo
-ok emerge  "qlist -I foo"                                installed foo
-ok brew    "brew list --versions foo"                    installed foo
-ok port    "port -q installed foo | grep ."              installed foo
-ok pkg     "pkg info foo"                                installed foo
-ok pkg_add "pkg_info -e foo"                             installed foo
-ok pkgin   "pkg_info -e foo"                             installed foo
-err installed
+ok dnf     "rpm -qa"                                     installed
+
+# --- single-argument tools run once per operand ------------------------------
+ok xbps    "xbps-query -Rs foo; xbps-query -Rs bar"      search foo bar
+ok xbps    "xbps-query -RS foo && xbps-query -RS bar"    info foo bar
+ok xbps    "xbps-query -f foo && xbps-query -f bar"      files foo bar
+ok xbps    "xbps-query -o /a && xbps-query -o /b"        owns /a /b
+ok pkg     "pkg search foo; pkg search bar"              search foo bar
+ok pkg     "pkg search -e -f foo && pkg search -e -f bar" info foo bar
+ok pkg     "pkg which /a && pkg which /b"                owns /a /b
+ok pkg_add "pkg_info -Q foo; pkg_info -Q bar"            search foo bar
+ok pkg_add "pkg_info -E /a && pkg_info -E /b"            owns /a /b
+ok pkgin   "pkgin search foo; pkgin search bar"          search foo bar
+ok pkgin   "pkgin pkg-descr foo && pkgin pkg-descr bar"  info foo bar
+ok pkgin   "pkgin pkg-content foo && pkgin pkg-content bar" files foo bar
+ok xbps    "xbps-query -RS -- -foo"                      info -- -foo
+ok xbps    "xbps-query -RS 'a b'"                        info "a b"
+
+# --- local package files (install) ------------------------------------------
+ok apt     "sudo apt-get install ./foo.deb"              install foo.deb
+ok apt     "sudo apt-get install /tmp/foo.deb bar"       install /tmp/foo.deb bar
+ok dnf     "sudo dnf install ./foo.rpm"                  install foo.rpm
+ok zypper  "sudo zypper install ./foo.rpm"               install foo.rpm
+ok apk     "sudo apk add ./foo.apk"                      install foo.apk
+ok pacman  "sudo pacman -U ./foo.pkg.tar.zst"            install foo.pkg.tar.zst
+ok pacman  "sudo pacman -U --noconfirm ./a.pkg.tar.zst /b.pkg.tar.xz" install -y ./a.pkg.tar.zst /b.pkg.tar.xz
+no pacman  "another for the repository"                                    install ./foo.pkg.tar.zst vim
+ok pkg     "sudo pkg add ./foo.pkg"                      install foo.pkg
+no pkg     "another for the repository"                                    install foo.pkg vim
+ok pkg_add "sudo pkg_add ./foo.tgz"                      install foo.tgz
+ok pkgin   "sudo pkg_add ./foo.tgz"                      install foo.tgz
+no xbps    "xbps-rindex"                                 install foo.xbps
+no emerge  "ebuilds"                                     install foo.tgz
+no brew    "installer -pkg"                              install foo.pkg
+no port    "installer -pkg"                              install foo.pkg
+ok apt     "sudo apt-get install ./-x.deb"               install -- -x.deb
 
 # --- generic raw path for more managers -------------------------------------
 ok dnf    "dnf history"                                          raw -- history
@@ -425,11 +474,18 @@ case "$got" in
     *"apt list --installed"*) pass=$((pass + 1)) ;;
     *) fail=$((fail + 1)); echo "FAIL which ls — got: $got" ;;
 esac
-got=$(run_pkx apt which 2>&1)
+# which accepts aliases, rejects meta-commands, and shows raw
+got=$(run_pkx apt which installed 2>&1)
 case "$got" in
-    *"aliases:"*) pass=$((pass + 1)) ;;
-    *) fail=$((fail + 1)); echo "FAIL which — missing aliases line: $got" ;;
+    *"apt list --installed"*"dpkg-query"*) pass=$((pass + 1)) ;;
+    *) fail=$((fail + 1)); echo "FAIL which installed — got: $got" ;;
 esac
+got=$(run_pkx pacman which raw 2>&1)
+case "$got" in
+    *"pacman <args>"*) pass=$((pass + 1)) ;;
+    *) fail=$((fail + 1)); echo "FAIL which raw — got: $got" ;;
+esac
+err which help
 
 # --- version ----------------------------------------------------------------
 # shellcheck disable=SC2086  # PKX_SH is intentionally word-split
@@ -453,10 +509,22 @@ err --badflag install foo
 err raw
 err upgrade ""
 err install ""
-err list foo
 err which foo
 err -V install foo
-err install foo -h
+err version foo
+err help install remove
+err update
+err help update
+err which update
+err search -i foo
+err -i search foo
+err -s -i foo
+err -si foo
+err -x install foo
+err -yx install foo
+err -
+err --bogus
+err refresh foo
 err --via "" install foo
 err --via= install foo
 
@@ -482,6 +550,173 @@ case "$got" in
         if [ "$rc" -eq 0 ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL version rc=$rc"; fi ;;
     *) fail=$((fail + 1)); echo "FAIL version — got: $got" ;;
 esac
+
+# --- aliases: every accepted spelling maps to its command --------------------
+# (word aliases, then the one-letter ones, which also work as flags)
+for pair in install:i install:in install:add remove:r remove:rm \
+            remove:uninstall remove:del search:s search:se search:find \
+            info:show list:l list:ls list:installed outdated:updates \
+            upgrade:u upgrade:up autoremove:orphans clean:cleanup \
+            owns:owner files:contents; do
+    v=${pair%%:*}; al=${pair#*:}
+    case $v in
+        install|remove|search|info|files) args=foo ;;
+        owns) args=/bin/ls ;;
+        *) args="" ;;
+    esac
+    # shellcheck disable=SC2086  # $args is intentionally split (0 or 1 word)
+    want=$(run_pkx apt -n "$v" $args 2>&1)
+    # shellcheck disable=SC2086
+    ok apt "$want" "$al" $args
+    if [ "${#al}" -eq 1 ]; then
+        # shellcheck disable=SC2086
+        ok apt "$want" "-$al" $args
+    fi
+done
+
+# --- command flags, bundling, and conflicts ---------------------------------
+ok apt "sudo apt-get install -y foo"                     -yi foo
+ok apt "sudo apt-get install -y foo"                     -iy foo
+ok apt "apt-cache search foo"                            foo -s
+ok apt "sudo apt-get install search"                     -i -- search
+ok apt "sudo apt-get install -y foo"                     -yq install foo
+ok apt "sudo apt-get install foo"                        -i -i foo
+ok apt "sudo apt-get install -- -foo"                    -i -- -foo
+
+# --- raw: everything after the command is verbatim ---------------------------
+ok pacman "pacman -S -- -foo"                            raw -S -- -foo
+ok pacman "pacman -S -- -foo"                            raw -- -S -- -foo
+ok pacman "pacman -Syu"                                  raw -Syu
+ok pacman "pacman -n -i -s"                              raw -n -i -s
+ok pacman "sudo pacman -S --needed raw"                           -i -- raw
+err -i raw
+
+# --- help for one command ------------------------------------------------------
+# shellcheck disable=SC2086
+got=$(PKX_MANAGER=apt PKX_SUDO=sudo $PKX_SH "$PKX" help search 2>&1); rc=$?
+case "$got" in
+    *"Usage: pkx search"*"Aliases: s, -s, se, find"*"apt-cache search <term>"*)
+        if [ "$rc" -eq 0 ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL help search rc=$rc"; fi ;;
+    *) fail=$((fail + 1)); echo "FAIL help search — got: $got" ;;
+esac
+# '<command> --help' and '-h <command>' show the same, and run nothing
+for form in "search --help" "-h search" "se -h" "-sh"; do
+    # shellcheck disable=SC2086
+    got2=$(PKX_MANAGER=apt PKX_SUDO=sudo $PKX_SH "$PKX" $form foo </dev/null 2>&1); rc=$?
+    if [ "$rc" -eq 0 ] && [ "$got2" = "$got" ]; then
+        pass=$((pass + 1))
+    else
+        fail=$((fail + 1)); echo "FAIL pkx $form foo — rc=$rc got: $got2"
+    fi
+done
+# A PATH with the shell and the utilities pkx needs but no package
+# manager, to exercise "nothing detected".
+N=$(mktemp -d 2>/dev/null || echo "${TMPDIR:-/tmp}/pkxnomgr.$$")
+mkdir -p "$N"
+# shellcheck disable=SC2086
+set -- $PKX_SH
+for b in "$1" sed tr id uname cat; do
+    ln -s "$(command -v "$b")" "$N/$b" 2>/dev/null
+done
+set --
+# help works (without a mapping) even when no manager can be found
+# shellcheck disable=SC2086
+got=$(PKX_SUDO=sudo PKX_OS_RELEASE=/nonexistent PATH=$N $PKX_SH "$PKX" help install 2>&1); rc=$?
+case "$got" in
+    *"Usage: pkx install"*"no supported package manager"*)
+        if [ "$rc" -eq 0 ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL help without manager rc=$rc"; fi ;;
+    *) fail=$((fail + 1)); echo "FAIL help without manager — got: $got" ;;
+esac
+# the alias table in the main help is generated from the same data
+# shellcheck disable=SC2086
+got=$($PKX_SH "$PKX" help 2>&1)
+case "$got" in
+    *"Aliases:"*"install     i in add"*"autoremove  orphans"*) pass=$((pass + 1)) ;;
+    *) fail=$((fail + 1)); echo "FAIL help — alias table: $got" ;;
+esac
+# usage errors win over a missing manager (exit 2, not 1)
+# shellcheck disable=SC2086
+PKX_OS_RELEASE=/nonexistent PATH=$N $PKX_SH "$PKX" list "" >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 2 ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL usage-before-detection rc=$rc"; fi
+# ...and a valid request with nothing detected is exit 1
+# shellcheck disable=SC2086
+PKX_OS_RELEASE=/nonexistent PATH=$N $PKX_SH "$PKX" list >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 1 ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL no-manager rc=$rc"; fi
+rm -rf "$N"
+
+# --- detection: os-release names the native manager --------------------------
+# Stubs for several managers share one PATH; os-release must decide, so a
+# Debian box with apk-tools or pacman installed (for chroots) still gets apt.
+D=$(mktemp -d 2>/dev/null || echo "${TMPDIR:-/tmp}/pkxdet.$$")
+mkdir -p "$D/bin"
+for b in apt-get apk pacman dnf yum zypper xbps-install; do
+    printf '#!/bin/sh\nexit 0\n' > "$D/bin/$b"; chmod +x "$D/bin/$b"
+done
+# hermetic PATH: the stubs plus only what pkx itself needs, so a real
+# manager on the test host cannot influence detection
+# shellcheck disable=SC2086
+set -- $PKX_SH
+for b in "$1" sed tr id uname cat; do
+    ln -s "$(command -v "$b")" "$D/bin/$b" 2>/dev/null
+done
+set --
+# detect <expected mgr> <os-release contents>
+detect() {
+    printf '%s\n' "$2" > "$D/os-release"
+    # shellcheck disable=SC2086
+    got=$(PATH="$D/bin" PKX_OS_RELEASE="$D/os-release" PKX_SUDO=sudo \
+          $PKX_SH "$PKX" which 2>&1 | sed -n 's/^manager: *\([^ ]*\).*/\1/p')
+    if [ "$got" = "$1" ]; then
+        pass=$((pass + 1))
+    else
+        fail=$((fail + 1)); echo "FAIL detect '$2' — expected $1, got '$got'"
+    fi
+}
+detect apt    'ID=debian'
+detect apt    'ID=linuxmint
+ID_LIKE="ubuntu debian"'
+detect apk    'ID=alpine'
+detect pacman 'ID=endeavouros
+ID_LIKE=arch'
+detect dnf    'ID="rocky"
+ID_LIKE="rhel centos fedora"'
+detect zypper 'ID="opensuse-tumbleweed"
+ID_LIKE="opensuse suse"'
+detect xbps   'ID=void'
+rm -f "$D/bin/dnf"
+detect yum    'ID="centos"'
+# unknown distro: fall back to probing binaries (apt-get first)
+detect apt    'ID=somethingelse'
+rm -f "$D/bin/apt-get" "$D/bin/yum" "$D/bin/pacman" "$D/bin/zypper"
+detect apk    'ID=somethingelse'
+rm -rf "$D"
+
+# --- zypper on Tumbleweed (os-release driven) --------------------------------
+TW=$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/pkxtw.$$")
+printf 'ID="opensuse-tumbleweed"\nNAME="openSUSE Tumbleweed"\n' > "$TW"
+# shellcheck disable=SC2086
+got=$(PKX_OS_RELEASE="$TW" PKX_MANAGER=zypper PKX_SUDO=sudo $PKX_SH "$PKX" -n upgrade 2>&1)
+if [ "$got" = "sudo zypper refresh && sudo zypper dist-upgrade" ]; then
+    pass=$((pass + 1))
+else
+    fail=$((fail + 1)); echo "FAIL zypper Tumbleweed upgrade — got: $got"
+fi
+# shellcheck disable=SC2086
+got=$(PKX_OS_RELEASE="$TW" PKX_MANAGER=zypper PKX_SUDO=sudo $PKX_SH "$PKX" -n upgrade foo 2>&1); rc=$?
+case "$got" in
+    *"single-package upgrade"*"Tumbleweed"*)
+        if [ "$rc" -eq 3 ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL zypper TW single rc=$rc"; fi ;;
+    *) fail=$((fail + 1)); echo "FAIL zypper Tumbleweed single-package — got: $got" ;;
+esac
+printf 'ID="opensuse-leap"\n' > "$TW"
+# shellcheck disable=SC2086
+got=$(PKX_OS_RELEASE="$TW" PKX_MANAGER=zypper PKX_SUDO=sudo $PKX_SH "$PKX" -n upgrade foo 2>&1)
+if [ "$got" = "sudo zypper refresh && sudo zypper update foo" ]; then
+    pass=$((pass + 1))
+else
+    fail=$((fail + 1)); echo "FAIL zypper Leap single-package — got: $got"
+fi
+rm -f "$TW"
 
 # --- runtime (eval path, via stub binaries) ----------------------------------
 # These execute pkx for real against stub package managers in a temp dir,
@@ -514,6 +749,20 @@ quiet=$(PATH="$T:$PATH" PKX_MANAGER=apt PKX_SUDO='' $PKX_SH "$PKX" -q install fo
 case "$quiet" in
     *"pkx: running:"*) fail=$((fail + 1)); echo "FAIL runtime -q — teaching line not suppressed: $quiet" ;;
     *) pass=$((pass + 1)) ;;
+esac
+
+# PKX_QUIET=1 silences; PKX_QUIET=0 does not
+# shellcheck disable=SC2086
+quiet=$(PATH="$T:$PATH" PKX_QUIET=1 PKX_MANAGER=apt PKX_SUDO='' $PKX_SH "$PKX" install foo </dev/null 2>&1 >/dev/null)
+case "$quiet" in
+    *"pkx: running:"*) fail=$((fail + 1)); echo "FAIL runtime PKX_QUIET=1 — not suppressed: $quiet" ;;
+    *) pass=$((pass + 1)) ;;
+esac
+# shellcheck disable=SC2086
+teach=$(PATH="$T:$PATH" PKX_QUIET=0 PKX_MANAGER=apt PKX_SUDO='' $PKX_SH "$PKX" install foo </dev/null 2>&1 >/dev/null)
+case "$teach" in
+    *"pkx: running: apt-get install foo"*) pass=$((pass + 1)) ;;
+    *) fail=$((fail + 1)); echo "FAIL runtime PKX_QUIET=0 — teaching line missing: $teach" ;;
 esac
 
 # missing required helper is caught cleanly (emerge present, qlist absent)

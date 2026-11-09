@@ -21,8 +21,15 @@
 #
 # https://github.com/ethanpil/pkx
 
-PKX_VERSION="0.4.0"
+PKX_VERSION="0.5.0"
 SUPPORTED_MGRS="apt dnf yum pacman apk zypper xbps emerge brew port pkg pkg_add pkgin"
+
+# Every command, in help order. Package verbs first, then meta-commands.
+PKG_VERBS="install remove search info list outdated refresh upgrade autoremove clean owns files"
+ALL_VERBS="$PKG_VERBS which raw help version"
+
+# Where distro identification is read from (overridable for tests).
+OS_RELEASE=${PKX_OS_RELEASE:-/etc/os-release}
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -37,34 +44,56 @@ print_version() { printf 'pkx %s\n' "$PKX_VERSION"; }
 # Set $y to the assume-yes flag (with a leading space) when -y/--yes was given.
 yesflag() { if [ "$YES" = 1 ]; then y=" $1"; else y=""; fi; }
 
-# Shell-quote the operands into $pk so `eval "$NATIVE"` treats each argument
-# literally — no word-splitting, no glob expansion, no command injection, and
-# whitespace or metacharacters (spaces in paths, version specs like 'foo>=1',
-# rpm capabilities like 'perl(URI)') survive intact. Operands made only of
-# safe characters are left bare so teaching-mode output stays readable;
-# anything else is single-quoted with embedded single quotes escaped.
+# Shell-quote one argument into $_q so `eval "$NATIVE"` treats it literally —
+# no word-splitting, no glob expansion, no command injection, and whitespace
+# or metacharacters (spaces in paths, version specs like 'foo>=1', rpm
+# capabilities like 'perl(URI)') survive intact. Arguments made only of safe
+# characters are left bare so teaching-mode output stays readable; anything
+# else is single-quoted with embedded single quotes escaped. NOQUOTE=1 (used
+# for the <pkg> placeholders in 'pkx which') leaves everything bare.
+q1() {
+    _q=$1
+    [ "$NOQUOTE" = 1 ] && return
+    case $1 in
+        # the safe set is spelled out (no a-z ranges) so classification
+        # cannot vary with the caller's locale collation
+        ""|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._@/:+-]*)
+            case $1 in
+                *"'"*)
+                    # sed escapes the embedded single quotes; the sentinel
+                    # keeps $(...) from stripping a trailing newline
+                    _q=$(printf '%sX' "$1" | sed "s/'/'\\\\''/g"); _q=${_q%X} ;;
+            esac
+            _q="'$_q'" ;;
+    esac
+}
+
+# Quote all operands into $pk (space-separated); DASHED=1 if any begins
+# with '-'.
 shquote() {
     pk=""
     DASHED=0
     for _a in "$@"; do
         case $_a in -*) DASHED=1 ;; esac
-        case $_a in
-            # the safe set is spelled out (no a-z ranges) so classification
-            # cannot vary with the caller's locale collation
-            ""|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._@/:+-]*)
-                case $_a in
-                    *"'"*)
-                        # sed escapes the embedded single quotes; the sentinel
-                        # keeps $(...) from stripping a trailing newline
-                        _e=$(printf '%sX' "$_a" | sed "s/'/'\\\\''/g"); _e=${_e%X} ;;
-                    *)  _e=$_a ;;
-                esac
-                pk="$pk '$_e'" ;;
-            *)
-                pk="$pk $_a" ;;
-        esac
+        q1 "$_a"
+        pk="$pk $_q"
     done
     pk=${pk# }
+}
+
+# each <joiner> <command> <suffix> <operand>... — one native call per
+# operand, joined with '&&' or ';'. For tools whose query takes exactly one
+# argument (xbps-query, pkg search, pkgin pkg-descr, ...) and so would
+# silently ignore or reject the rest of a multi-operand request.
+each() {
+    _j=$1; _pre=$2; _suf=$3; shift 3
+    NATIVE=""
+    for _a in "$@"; do
+        q1 "$_a"
+        case $_a in -*) _q="-- $_q" ;; esac
+        if [ "$_j" = ';' ]; then _sep='; '; else _sep=" $_j "; fi
+        NATIVE="${NATIVE:+$NATIVE$_sep}$_pre $_q$_suf"
+    done
 }
 
 usage_err() {
@@ -73,50 +102,121 @@ usage_err() {
     exit 2
 }
 
+# ---------------------------------------------------------------------------
+# commands and their aliases (single source of truth for parsing and help)
+# ---------------------------------------------------------------------------
+
+# verb_info <verb> — sets VSYN (synopsis), VDESC/VDESC2 (one or two help
+# lines) and VALIAS (accepted alternative names). A one-letter alias also
+# works as a flag: 'pkx -s htop' is 'pkx search htop'.
+verb_info() {
+    VALIAS=""
+    VDESC2=""
+    case $1 in
+        install)    VSYN="install <pkg>..."; VALIAS="i in add"
+                    VDESC="Install packages (repository names or package files)" ;;
+        remove)     VSYN="remove <pkg>...";  VALIAS="r rm uninstall del"
+                    VDESC="Uninstall packages" ;;
+        search)     VSYN="search <term>..."; VALIAS="s se find"
+                    VDESC="Search the repositories" ;;
+        info)       VSYN="info <pkg>...";    VALIAS="show"
+                    VDESC="Show package details" ;;
+        list)       VSYN="list [pkg]...";    VALIAS="l ls installed"
+                    VDESC="List installed packages, or check that the named"
+                    VDESC2="packages are installed (exit 0 = all installed)" ;;
+        outdated)   VSYN="outdated";         VALIAS="updates"
+                    VDESC="List packages that have upgrades available" ;;
+        refresh)    VSYN="refresh"
+                    VDESC="Update the package index only" ;;
+        upgrade)    VSYN="upgrade [pkg]..."; VALIAS="u up"
+                    VDESC="Refresh the index, then upgrade everything (or"
+                    VDESC2="only the named packages)" ;;
+        autoremove) VSYN="autoremove";       VALIAS="orphans"
+                    VDESC="Remove dependencies that are no longer needed" ;;
+        clean)      VSYN="clean";            VALIAS="cleanup"
+                    VDESC="Clear the package cache" ;;
+        owns)       VSYN="owns <file>...";   VALIAS="owner"
+                    VDESC="Show which package owns a file" ;;
+        files)      VSYN="files <pkg>...";   VALIAS="contents"
+                    VDESC="List the files a package installed" ;;
+        which)      VSYN="which [command]"
+                    VDESC="Show the detected manager and what every command"
+                    VDESC2="runs here (or just one command)" ;;
+        raw)        VSYN="raw [--] <args>"
+                    VDESC="Pass args straight to the native tool (no sudo)" ;;
+        help)       VSYN="help [command]"
+                    VDESC="Show help (for one command: also what it runs here)" ;;
+        version)    VSYN="version"
+                    VDESC="Show version" ;;
+    esac
+}
+
+# canon_verb <word> — sets CV to the canonical verb, or "" if unknown.
+canon_verb() {
+    CV=""
+    for _v in $ALL_VERBS; do
+        verb_info "$_v"
+        for _al in $_v $VALIAS; do
+            if [ "$1" = "$_al" ]; then CV=$_v; return; fi
+        done
+    done
+}
+
+# 'update' means "refresh the index" to apt/apk/brew/pkg/pkgin but "upgrade
+# packages" to dnf/yum/zypper, so pkx refuses to guess.
+ambiguous_update() {
+    usage_err "'$1' is ambiguous across package managers: use 'pkx refresh' to update the package index, or 'pkx upgrade' to upgrade packages"
+}
+
+print_aliases() {
+    _left=""
+    for _v in $PKG_VERBS; do
+        verb_info "$_v"
+        [ -n "$VALIAS" ] || continue
+        _cell=$(printf '%-11s %s' "$_v" "$VALIAS")
+        if [ -z "$_left" ]; then
+            _left=$_cell
+        else
+            printf '  %-36s %s\n' "$_left" "$_cell"
+            _left=""
+        fi
+    done
+    [ -z "$_left" ] || printf '  %s\n' "$_left"
+}
+
 usage() {
+    printf 'pkx %s — one package-manager syntax for every Unix\n\n' "$PKX_VERSION"
+    printf 'Usage: pkx [flags] <command> [args]\n\nCommands:\n'
+    for _v in $ALL_VERBS; do
+        verb_info "$_v"
+        printf '  %-17s %s\n' "$VSYN" "$VDESC"
+        [ -z "$VDESC2" ] || printf '  %-17s %s\n' "" "$VDESC2"
+    done
+    printf '\nAliases:\n'
+    print_aliases
     cat <<EOF
-pkx $PKX_VERSION — one package-manager syntax for every Unix
-
-Usage: pkx [flags] <command> [args]
-
-Commands:
-  install <pkg>...   Install packages                       (alias: in)
-  remove <pkg>...    Uninstall packages                     (alias: rm)
-  search <term>...   Search repositories for a package      (alias: se)
-  info <pkg>...      Show package details
-  refresh            Update the package index only
-  upgrade [pkg]...   Refresh index and upgrade everything, or upgrade only
-                     the named packages                    (alias: up)
-  outdated           List packages with available upgrades
-  list               List installed packages                (alias: ls)
-  installed <pkg>... Check whether packages are installed
-  orphans            Remove dependencies no longer needed
-  clean              Clear the package manager caches
-  owns <file>...     Show which package owns a file
-  files <pkg>...     List files installed by a package
-  which [verb]       Show the detected manager and verb mappings
-                     (all of them, or just one)
-  raw [--] <args>    Pass args straight to the native tool (no sudo)
-  help               Show this help
-  version            Show version
+The one-letter aliases also work as flags: 'pkx -s htop', 'pkx -yi htop'.
+There is deliberately no 'update': it means refresh on some managers and
+upgrade on others, so pkx asks you to say which one you mean.
 
 Flags:
   -y, --yes          Assume yes on prompts
   -n, --dry-run      Print the native command without running it
   -q, --quiet        Do not print the native command before running
       --via <mgr>    Force a manager (see the supported list below)
-  -h, --help         Show this help
+  -h, --help         Show this help ('pkx <command> --help' for one command)
   -V, --version      Show version
 
-Flags may appear anywhere on the command line. Use -- so that a following
-token beginning with '-' is treated as an operand instead of a flag; the
-native tool still receives it verbatim, so the tool must accept such a name.
+Short flags can be combined (-yq). Flags may appear anywhere before a 'raw'
+command. Use -- so that a following token beginning with '-' is treated as
+an operand instead of a flag; the native tool then receives it after its own
+end-of-options marker.
 
 Environment:
   PKX_MANAGER        Same as --via
   PKX_SUDO           Privilege command to prefix root operations
                      (default: sudo, then doas; set empty to disable)
-  PKX_QUIET          Set non-empty to silence teaching mode (same as -q)
+  PKX_QUIET          Set to 1 to silence teaching mode (same as -q)
 
 Supported managers (for --via / PKX_MANAGER):
   $SUPPORTED_MGRS
@@ -137,33 +237,67 @@ EOF
 # Canonicalize a --via / PKX_MANAGER value; echoes "" if unknown.
 canon_mgr() {
     case "$1" in
-        apt|apt-get|debian|ubuntu)  echo apt ;;
-        dnf|fedora)                 echo dnf ;;
-        yum)                        echo yum ;;
-        pacman|arch)                echo pacman ;;
-        apk|alpine)                 echo apk ;;
-        zypper|suse|opensuse)       echo zypper ;;
-        xbps|void)                  echo xbps ;;
-        emerge|portage|gentoo)      echo emerge ;;
-        brew|homebrew)              echo brew ;;
-        port|ports|macports)        echo port ;;
-        pkg|freebsd)                echo pkg ;;
-        pkg_add|pkg-add|openbsd)    echo pkg_add ;;
-        pkgin|netbsd)               echo pkgin ;;
-        *)                          echo "" ;;
+        apt|apt-get|debian|ubuntu|mint|linuxmint|raspbian|termux) echo apt ;;
+        dnf|fedora|rhel|centos|rocky|alma|almalinux)  echo dnf ;;
+        yum)                                          echo yum ;;
+        pacman|arch|archlinux|manjaro|endeavouros)    echo pacman ;;
+        apk|alpine|wolfi|chimera)                     echo apk ;;
+        zypper|suse|opensuse|sles|tumbleweed|leap)    echo zypper ;;
+        xbps|void)                                    echo xbps ;;
+        emerge|portage|gentoo)                        echo emerge ;;
+        brew|homebrew|macos|darwin)                   echo brew ;;
+        port|ports|macports)                          echo port ;;
+        pkg|freebsd|dragonfly)                        echo pkg ;;
+        pkg_add|pkg-add|openbsd)                      echo pkg_add ;;
+        pkgin|netbsd)                                 echo pkgin ;;
+        *)                                            echo "" ;;
     esac
 }
 
-# Detection order matters: native distro managers first, brew last so a
-# Linux box with linuxbrew still gets its real manager. "pkg" is guarded
-# by uname because the name collides (Termux, others).
+# The binary whose presence means a manager is installed.
+mgr_bin() {
+    case "$1" in
+        apt)  echo apt-get ;;
+        xbps) echo xbps-install ;;
+        *)    echo "$1" ;;
+    esac
+}
+
+# Managers native to an os-release ID / ID_LIKE word, in preference order.
+distro_mgrs() {
+    case "$1" in
+        alpine|postmarketos|wolfi|chimera)                echo apk ;;
+        debian|ubuntu|raspbian|linuxmint|pop|kali|devuan) echo apt ;;
+        fedora|rhel|centos|rocky|almalinux|ol|amzn)       echo "dnf yum" ;;
+        arch|archarm|manjaro|endeavouros|artix|cachyos)   echo pacman ;;
+        opensuse*|suse|sles|sled)                         echo zypper ;;
+        void)                                             echo xbps ;;
+        gentoo|funtoo)                                    echo emerge ;;
+        freebsd|dragonfly|midnightbsd)                    echo pkg ;;
+    esac
+}
+
+# Prefer the distro's own manager as named by /etc/os-release (ID, then
+# ID_LIKE), so a Debian box that also has apk-tools, pacman or dnf installed
+# for building chroots still gets apt. Without a usable os-release, probe
+# for binaries: native distro managers first, brew last so a Linux box with
+# linuxbrew still gets its real manager. "pkg" is guarded by uname because
+# the name collides (Termux, others).
 detect_mgr() {
-    if   has apk;          then echo apk
-    elif has apt-get;      then echo apt
+    if [ -r "$OS_RELEASE" ]; then
+        _ids=$(sed -n -e 's/^ID=//p' -e 's/^ID_LIKE=//p' "$OS_RELEASE" 2>/dev/null | tr -d "\"'")
+        for _id in $_ids; do
+            for _m in $(distro_mgrs "$_id"); do
+                if has "$(mgr_bin "$_m")"; then echo "$_m"; return; fi
+            done
+        done
+    fi
+    if   has apt-get;      then echo apt
     elif has dnf;          then echo dnf
     elif has yum;          then echo yum
     elif has pacman;       then echo pacman
     elif has zypper;       then echo zypper
+    elif has apk;          then echo apk
     elif has xbps-install; then echo xbps
     elif has emerge;       then echo emerge
     elif has pkgin;        then echo pkgin
@@ -173,6 +307,33 @@ detect_mgr() {
     elif has brew;         then echo brew
     elif has port;         then echo port
     fi
+}
+
+# Sets MGR and MGR_SOURCE. Returns 1 when nothing could be detected (an
+# unknown forced manager is a usage error).
+resolve_mgr() {
+    if [ -n "$VIA" ]; then
+        MGR=$(canon_mgr "$VIA")
+        [ -n "$MGR" ] || usage_err "unknown manager '$VIA' (supported: $SUPPORTED_MGRS)"
+        MGR_SOURCE="forced via --via/PKX_MANAGER"
+        return 0
+    fi
+    MGR=$(detect_mgr)
+    MGR_SOURCE="auto-detected"
+    [ -n "$MGR" ]
+}
+
+no_mgr_found() {
+    warn "no supported package manager found on this system"
+    if has rpm-ostree; then
+        warn "this looks like an image-based system: use 'rpm-ostree install <pkg>' directly"
+    elif has transactional-update; then
+        warn "this looks like openSUSE MicroOS: use 'transactional-update pkg install <pkg>'"
+    elif has nix-env || has nix; then
+        warn "this looks like Nix: use 'nix profile install' or 'nix-env -iA'"
+    fi
+    warn "supported: $SUPPORTED_MGRS"
+    exit 1
 }
 
 # ---------------------------------------------------------------------------
@@ -202,7 +363,7 @@ resolve_sudo() {
 needs_root() {
     [ "$MGR" = brew ] && return 1   # Homebrew refuses to run under sudo
     case "$1" in
-        install|remove|refresh|upgrade|orphans|clean) return 0 ;;
+        install|remove|refresh|upgrade|autoremove|clean) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -210,17 +371,32 @@ needs_root() {
 # ---------------------------------------------------------------------------
 # command builders
 #
-# Each builder receives the verb in $1 and uses:
-#   $pk  - the package/file operands, shell-quoted for safe eval (see shquote)
-#   $E   - escalation prefix, "sudo " or "" (already spaced)
-#   $YES - 1 if -y/--yes was given
+# Each builder receives the verb in $1 and the raw operands in $2...,
+# and uses:
+#   $pk    - the operands, shell-quoted for safe eval (see q1), preceded by
+#            a native '--' when one begins with '-'
+#   $E     - escalation prefix, "sudo " or "" (already spaced)
+#   $YES   - 1 if -y/--yes was given
+#   $LOCAL - for install: "all" when every operand is a package file,
+#            "some" when only some are, "" when none are
 # It sets NATIVE to the native command string, or leaves NATIVE empty
 # and sets UNSUP to a one-line explanation.
 # ---------------------------------------------------------------------------
 
+# Refusals shared by several builders.
+unsup_mixed_local() {
+    UNSUP_OP="installing package files together with repository packages"
+    UNSUP="run one 'pkx install' for the files and another for the repository packages"
+}
+unsup_local() {
+    UNSUP_OP="installing a package file"
+    UNSUP=$1
+}
+
 build_apt() {
     yesflag -y
-    case "$1" in
+    v=$1; shift
+    case "$v" in
         install) NATIVE="${E}apt-get install$y $pk" ;;
         remove)  NATIVE="${E}apt-get remove$y $pk" ;;
         search)  NATIVE="apt-cache search $pk" ;;
@@ -236,9 +412,15 @@ build_apt() {
                 NATIVE="${E}apt-get update; ${E}apt-get dist-upgrade$y"
             fi ;;
         outdated) NATIVE="apt list --upgradable" ;;
-        installed) NATIVE="dpkg -s $pk" ;;
-        list)    NATIVE="apt list --installed" ;;
-        orphans) NATIVE="${E}apt-get autoremove$y" ;;
+        list)
+            # 'dpkg -s' exits 0 for a removed package whose config files
+            # remain (state rc), so check the status field explicitly.
+            if [ -n "$pk" ]; then
+                each '&&' "dpkg-query -W -f='\${Package} \${Version} \${db:Status-Status}\\n'" " | grep ' installed\$'" "$@"
+            else
+                NATIVE="apt list --installed"
+            fi ;;
+        autoremove) NATIVE="${E}apt-get autoremove$y" ;;
         clean)   NATIVE="${E}apt-get clean" ;;
         owns)    NATIVE="dpkg -S $pk" ;;
         files)   NATIVE="dpkg -L $pk" ;;
@@ -255,9 +437,8 @@ build_dnf() {
         refresh) NATIVE="${E}dnf makecache" ;;
         upgrade) NATIVE="${E}dnf upgrade --refresh$y${pk:+ $pk}" ;;
         outdated) NATIVE="dnf check-update" ;;
-        installed) NATIVE="rpm -q $pk" ;;
-        list)    NATIVE="rpm -qa" ;;
-        orphans) NATIVE="${E}dnf autoremove$y" ;;
+        list)    if [ -n "$pk" ]; then NATIVE="rpm -q $pk"; else NATIVE="rpm -qa"; fi ;;
+        autoremove) NATIVE="${E}dnf autoremove$y" ;;
         clean)   NATIVE="${E}dnf clean all" ;;
         owns)    NATIVE="rpm -qf $pk" ;;
         files)   NATIVE="rpm -ql $pk" ;;
@@ -274,9 +455,8 @@ build_yum() {
         refresh) NATIVE="${E}yum makecache" ;;
         upgrade) NATIVE="${E}yum update$y${pk:+ $pk}" ;;
         outdated) NATIVE="yum check-update" ;;
-        installed) NATIVE="rpm -q $pk" ;;
-        list)    NATIVE="rpm -qa" ;;
-        orphans) NATIVE="${E}yum autoremove$y" ;;
+        list)    if [ -n "$pk" ]; then NATIVE="rpm -q $pk"; else NATIVE="rpm -qa"; fi ;;
+        autoremove) NATIVE="${E}yum autoremove$y" ;;
         clean)   NATIVE="${E}yum clean all" ;;
         owns)    NATIVE="rpm -qf $pk" ;;
         files)   NATIVE="rpm -ql $pk" ;;
@@ -286,7 +466,15 @@ build_yum() {
 build_pacman() {
     yesflag --noconfirm
     case "$1" in
-        install) NATIVE="${E}pacman -S$y $pk" ;;
+        install)
+            # package files go through -U; -S only knows repository names
+            case "$LOCAL" in
+                all)  NATIVE="${E}pacman -U$y $pk" ;;
+                some) unsup_mixed_local ;;
+                # --needed: an already-installed package is left alone,
+                # as on every other manager, instead of being reinstalled
+                *)    NATIVE="${E}pacman -S --needed$y $pk" ;;
+            esac ;;
         remove)  NATIVE="${E}pacman -Rns$y $pk" ;;
         search)  NATIVE="pacman -Ss $pk" ;;
         info)    NATIVE="pacman -Si $pk" ;;
@@ -299,9 +487,8 @@ build_pacman() {
                 NATIVE="${E}pacman -Syu$y"
             fi ;;
         outdated) NATIVE="pacman -Qu" ;;
-        installed) NATIVE="pacman -Q $pk" ;;
-        list)    NATIVE="pacman -Q" ;;
-        orphans) REQ=pacman
+        list)    NATIVE="pacman -Q${pk:+ $pk}" ;;
+        autoremove) REQ=pacman
                  NATIVE="if orphans=\$(pacman -Qdtq); then ${E}pacman -Rns$y \$orphans; else echo 'pkx: no orphaned packages to remove'; fi" ;;
         clean)   NATIVE="${E}pacman -Sc$y" ;;
         owns)    NATIVE="pacman -Qo $pk" ;;
@@ -319,9 +506,9 @@ build_apk() {
         refresh) NATIVE="${E}apk update" ;;
         upgrade) NATIVE="${E}apk update && ${E}apk upgrade${pk:+ $pk}" ;;
         outdated) NATIVE="apk list -u" ;;
-        installed) NATIVE="apk info -e $pk" ;;
-        list)    NATIVE="apk list --installed" ;;
-        orphans) UNSUP="apk removes unneeded dependencies automatically when you 'pkx remove' a package" ;;
+        list)
+            if [ -n "$pk" ]; then NATIVE="apk info -e $pk"; else NATIVE="apk list --installed"; fi ;;
+        autoremove) UNSUP="apk removes unneeded dependencies automatically when you 'pkx remove' a package" ;;
         clean)   NATIVE="${E}apk cache clean" ;;
         owns)    NATIVE="apk info --who-owns $pk" ;;
         files)   NATIVE="apk info -L $pk" ;;
@@ -340,7 +527,7 @@ build_zypper() {
             # Rolling Tumbleweed needs `zypper dup`; Leap/SLES use `update`.
             # A single-package update on Tumbleweed is a partial upgrade,
             # refused for the same reason pkx refuses it on Arch.
-            if grep -qi tumbleweed /etc/os-release 2>/dev/null; then
+            if grep -qi tumbleweed "$OS_RELEASE" 2>/dev/null; then
                 if [ -n "$pk" ]; then
                     UNSUP_OP="single-package upgrade"
                     UNSUP="a partial upgrade can break rolling Tumbleweed; run 'pkx upgrade' (zypper dist-upgrade) to upgrade everything instead"
@@ -351,15 +538,15 @@ build_zypper() {
                 # Don't fail open silently: if the distro file is unreadable
                 # this could still BE Tumbleweed, where 'update' is a
                 # partial upgrade. Warn (except during dry-run).
-                if [ ! -r /etc/os-release ] && [ "$DRYRUN" != 1 ]; then
-                    warn "warning: cannot read /etc/os-release; assuming non-rolling zypper (Tumbleweed needs 'zypper dist-upgrade')"
+                if [ ! -r "$OS_RELEASE" ] && [ "$DRYRUN" != 1 ]; then
+                    warn "warning: cannot read $OS_RELEASE; assuming non-rolling zypper (Tumbleweed needs 'zypper dist-upgrade')"
                 fi
                 NATIVE="${E}zypper refresh && ${E}zypper$y update${pk:+ $pk}"
             fi ;;
         outdated) NATIVE="zypper list-updates" ;;
-        installed) NATIVE="rpm -q $pk" ;;
-        list)    NATIVE="zypper search --installed-only" ;;
-        orphans) UNSUP="zypper has no autoremove; remove a package with its deps via 'zypper remove --clean-deps <pkg>'" ;;
+        list)
+            if [ -n "$pk" ]; then NATIVE="rpm -q $pk"; else NATIVE="zypper search --installed-only"; fi ;;
+        autoremove) UNSUP="zypper has no autoremove; remove a package with its deps via 'zypper remove --clean-deps <pkg>'" ;;
         clean)   NATIVE="${E}zypper clean --all" ;;
         owns)    NATIVE="rpm -qf $pk" ;;
         files)   NATIVE="rpm -ql $pk" ;;
@@ -367,21 +554,41 @@ build_zypper() {
 }
 
 build_xbps() {
+    # xbps-query takes exactly one PKG/PATTERN per call, so multi-operand
+    # queries run it once per operand.
     yesflag -y
-    case "$1" in
-        install) NATIVE="${E}xbps-install$y $pk" ;;
+    v=$1; shift
+    case "$v" in
+        install)
+            if [ -n "$LOCAL" ]; then
+                unsup_local "xbps installs only from repositories; index the file with 'xbps-rindex -a <file>', then 'xbps-install --repository=<dir> <pkg>'"
+            else
+                NATIVE="${E}xbps-install$y $pk"
+            fi ;;
         remove)  NATIVE="${E}xbps-remove$y $pk" ;;
-        search)  NATIVE="xbps-query -Rs $pk" ;;
-        info)    NATIVE="xbps-query -RS $pk" ;;
+        search)  each ';' "xbps-query -Rs" "" "$@" ;;
+        info)    each '&&' "xbps-query -RS" "" "$@" ;;
         refresh) NATIVE="${E}xbps-install -S" ;;
-        upgrade) NATIVE="${E}xbps-install -Su$y${pk:+ $pk}" ;;
+        upgrade)
+            # xbps-install -u installs a named package that is missing, so
+            # check each one is installed first (reported, not installed)
+            if [ -n "$pk" ]; then
+                each '&&' "xbps-query -p pkgver" "" "$@"
+                NATIVE="$NATIVE && ${E}xbps-install -Su$y $pk"
+            else
+                NATIVE="${E}xbps-install -Su$y"
+            fi ;;
         outdated) NATIVE="xbps-install -un" ;;
-        installed) NATIVE="xbps-query -S $pk" ;;
-        list)    NATIVE="xbps-query -l" ;;
-        orphans) NATIVE="${E}xbps-remove -o$y" ;;
+        list)
+            if [ -n "$pk" ]; then
+                each '&&' "xbps-query -p pkgver" "" "$@"
+            else
+                NATIVE="xbps-query -l"
+            fi ;;
+        autoremove) NATIVE="${E}xbps-remove -o$y" ;;
         clean)   NATIVE="${E}xbps-remove -O$y" ;;
-        owns)    NATIVE="xbps-query -o $pk" ;;
-        files)   NATIVE="xbps-query -f $pk" ;;
+        owns)    each '&&' "xbps-query -o" "" "$@" ;;
+        files)   each '&&' "xbps-query -f" "" "$@" ;;
     esac
 }
 
@@ -390,7 +597,12 @@ build_emerge() {
     # list/owns/files use portage-utils (qlist/qfile); clean uses
     # gentoolkit (eclean-dist). Both are standard Gentoo admin tools.
     case "$1" in
-        install) NATIVE="${E}emerge $pk" ;;
+        install)
+            if [ -n "$LOCAL" ]; then
+                unsup_local "portage installs from ebuilds or its own binary package host, not from a package file"
+            else
+                NATIVE="${E}emerge $pk"
+            fi ;;
         remove)  NATIVE="${E}emerge --deselect $pk && ${E}emerge --depclean $pk" ;;
         search)  NATIVE="emerge --search $pk" ;;
         info)    NATIVE="emerge --pretend --verbose $pk" ;;
@@ -403,9 +615,8 @@ build_emerge() {
                 NATIVE="${E}emerge --sync && ${E}emerge --update --deep --newuse @world"
             fi ;;
         outdated) NATIVE="emerge --pretend --update --deep --newuse @world" ;;
-        installed) NATIVE="qlist -I $pk" ;;
-        list)    NATIVE="qlist -Iv" ;;
-        orphans) NATIVE="${E}emerge --depclean" ;;
+        list)    NATIVE="qlist -Iv${pk:+ $pk}" ;;
+        autoremove) NATIVE="${E}emerge --depclean" ;;
         clean)   NATIVE="${E}eclean-dist" ;;
         owns)    NATIVE="qfile $pk" ;;
         files)   NATIVE="qlist $pk" ;;
@@ -415,16 +626,20 @@ build_emerge() {
 build_brew() {
     # Homebrew must never run under sudo; it is non-interactive already.
     case "$1" in
-        install) NATIVE="brew install $pk" ;;
+        install)
+            if [ -n "$LOCAL" ]; then
+                unsup_local "Homebrew installs formulae and casks, not package files; for a macOS .pkg installer run 'sudo installer -pkg <file> -target /'"
+            else
+                NATIVE="brew install $pk"
+            fi ;;
         remove)  NATIVE="brew uninstall $pk" ;;
         search)  NATIVE="brew search $pk" ;;
         info)    NATIVE="brew info $pk" ;;
         refresh) NATIVE="brew update" ;;
         upgrade) NATIVE="brew update && brew upgrade${pk:+ $pk}" ;;
         outdated) NATIVE="brew outdated" ;;
-        installed) NATIVE="brew list --versions $pk" ;;
-        list)    NATIVE="brew list --versions" ;;
-        orphans) NATIVE="brew autoremove" ;;
+        list)    NATIVE="brew list --versions${pk:+ $pk}" ;;
+        autoremove) NATIVE="brew autoremove" ;;
         clean)   NATIVE="brew cleanup" ;;
         owns)    UNSUP="Homebrew cannot map an arbitrary file back to a package" ;;
         files)   NATIVE="brew list --verbose $pk" ;;
@@ -433,19 +648,29 @@ build_brew() {
 
 build_port() {
     yesflag -N
-    case "$1" in
-        install) NATIVE="${E}port$y install $pk" ;;
+    v=$1; shift
+    case "$v" in
+        install)
+            if [ -n "$LOCAL" ]; then
+                unsup_local "MacPorts installs ports by name; for a macOS .pkg installer run 'sudo installer -pkg <file> -target /'"
+            else
+                NATIVE="${E}port$y install $pk"
+            fi ;;
         remove)  NATIVE="${E}port$y uninstall $pk" ;;
         search)  NATIVE="port search $pk" ;;
         info)    NATIVE="port info $pk" ;;
         refresh) NATIVE="${E}port sync" ;;
         upgrade) NATIVE="${E}port selfupdate && ${E}port$y upgrade ${pk:-outdated}" ;;
         outdated) NATIVE="port outdated" ;;
-        installed)
-            # port always exits 0; grep supplies the yes/no exit code
-            NATIVE="port -q installed $pk | grep ." ;;
-        list)    NATIVE="port installed" ;;
-        orphans) NATIVE="${E}port$y uninstall leaves" ;;
+        list)
+            # port always exits 0; grep supplies the yes/no exit code, once
+            # per port so one installed port cannot vouch for another
+            if [ -n "$pk" ]; then
+                each '&&' "port -q installed" " | grep ." "$@"
+            else
+                NATIVE="port installed"
+            fi ;;
+        autoremove) NATIVE="${E}port$y uninstall leaves" ;;
         clean)   NATIVE="${E}port clean --all installed" ;;
         owns)    NATIVE="port provides $pk" ;;
         files)   NATIVE="port contents $pk" ;;
@@ -453,52 +678,74 @@ build_port() {
 }
 
 build_pkg() {
+    # pkg search and pkg which take exactly one pattern/file per call.
     yesflag -y
-    case "$1" in
-        install) NATIVE="${E}pkg install$y $pk" ;;
+    v=$1; shift
+    case "$v" in
+        install)
+            # pkg install only resolves repository names; files use pkg add
+            case "$LOCAL" in
+                all)  NATIVE="${E}pkg add $pk" ;;
+                some) unsup_mixed_local ;;
+                *)    NATIVE="${E}pkg install$y $pk" ;;
+            esac ;;
         remove)  NATIVE="${E}pkg delete$y $pk" ;;
-        search)  NATIVE="pkg search $pk" ;;
-        info)    NATIVE="pkg search -e -f $pk" ;;
+        search)  each ';' "pkg search" "" "$@" ;;
+        info)    each '&&' "pkg search -e -f" "" "$@" ;;
         refresh) NATIVE="${E}pkg update" ;;
         upgrade) NATIVE="${E}pkg upgrade$y${pk:+ $pk}" ;;
         outdated) NATIVE="pkg version -vRL=" ;;
-        installed) NATIVE="pkg info $pk" ;;
-        list)    NATIVE="pkg info" ;;
-        orphans) NATIVE="${E}pkg autoremove$y" ;;
+        list)    NATIVE="pkg info${pk:+ $pk}" ;;
+        autoremove) NATIVE="${E}pkg autoremove$y" ;;
         clean)   NATIVE="${E}pkg clean$y" ;;
-        owns)    NATIVE="pkg which $pk" ;;
+        owns)    each '&&' "pkg which" "" "$@" ;;
         files)   NATIVE="pkg info -l $pk" ;;
     esac
 }
 
 build_pkg_add() {
-    # pkg_add/pkg_delete are non-interactive already, and there is no
-    # "assume yes" flag (-I means "do not run install/deinstall scripts"),
-    # so -y is a no-op here.
-    case "$1" in
-        install) NATIVE="${E}pkg_add $pk" ;;
-        remove)  NATIVE="${E}pkg_delete $pk" ;;
-        search)  NATIVE="pkg_info -Q $pk" ;;
+    # OpenBSD: -I forces non-interactive mode in pkg_add and pkg_delete
+    # (on NetBSD -I means something else, but that is pkgin's builder).
+    # pkg_info -Q/-E/-e take one argument each, so those run per operand.
+    yesflag -I
+    v=$1; shift
+    case "$v" in
+        install) NATIVE="${E}pkg_add$y $pk" ;;
+        remove)  NATIVE="${E}pkg_delete$y $pk" ;;
+        search)  each ';' "pkg_info -Q" "" "$@" ;;
         info)    NATIVE="pkg_info $pk" ;;
         refresh) UNSUP="OpenBSD has no separate index refresh; pkg_add always queries the mirrors" ;;
-        upgrade) NATIVE="${E}pkg_add -u${pk:+ $pk}" ;;
+        upgrade) NATIVE="${E}pkg_add$y -u${pk:+ $pk}" ;;
         outdated) NATIVE="pkg_add -un" ;;
-        installed) NATIVE="pkg_info -e $pk" ;;
-        list)    NATIVE="pkg_info" ;;
-        orphans) NATIVE="${E}pkg_delete -a" ;;
+        list)
+            if [ -n "$pk" ]; then
+                each '&&' "pkg_info -e" "" "$@"
+            else
+                NATIVE="pkg_info"
+            fi ;;
+        autoremove) NATIVE="${E}pkg_delete$y -a" ;;
         clean)   UNSUP="OpenBSD keeps no package cache to clean" ;;
-        owns)    NATIVE="pkg_info -E $pk" ;;
+        owns)    each '&&' "pkg_info -E" "" "$@" ;;
         files)   NATIVE="pkg_info -L $pk" ;;
     esac
 }
 
 build_pkgin() {
+    # pkgin search/pkg-descr/pkg-content take exactly one argument, so
+    # those run per operand. pkgin's -y does not cover autoremove.
     yesflag -y
-    case "$1" in
-        install) NATIVE="${E}pkgin$y install $pk" ;;
+    v=$1; shift
+    case "$v" in
+        install)
+            # pkgin installs from repositories; package files use pkg_add
+            case "$LOCAL" in
+                all)  NATIVE="${E}pkg_add $pk" ;;
+                some) unsup_mixed_local ;;
+                *)    NATIVE="${E}pkgin$y install $pk" ;;
+            esac ;;
         remove)  NATIVE="${E}pkgin$y remove $pk" ;;
-        search)  NATIVE="pkgin search $pk" ;;
-        info)    NATIVE="pkgin pkg-descr $pk" ;;
+        search)  each ';' "pkgin search" "" "$@" ;;
+        info)    each '&&' "pkgin pkg-descr" "" "$@" ;;
         refresh) NATIVE="${E}pkgin update" ;;
         upgrade)
             if [ -n "$pk" ]; then
@@ -506,31 +753,55 @@ build_pkgin() {
             else
                 NATIVE="${E}pkgin update && ${E}pkgin$y full-upgrade"
             fi ;;
-        outdated) UNSUP="pkgin cannot list updates separately; run 'pkx upgrade' without -y and answer no to preview" ;;
-        installed) NATIVE="pkg_info -e $pk" ;;
-        list)    NATIVE="pkgin list" ;;
-        orphans) NATIVE="${E}pkgin$y autoremove" ;;
+        outdated) UNSUP="pkgin has no read-only update listing; preview an upgrade with 'pkx raw -- -n full-upgrade'" ;;
+        list)
+            if [ -n "$pk" ]; then
+                each '&&' "pkg_info -e" "" "$@"
+            else
+                NATIVE="pkgin list"
+            fi ;;
+        autoremove) NATIVE="${E}pkgin$y autoremove" ;;
         clean)   NATIVE="${E}pkgin clean" ;;
         owns)    NATIVE="pkg_info -Fe $pk" ;;
-        files)   NATIVE="pkgin pkg-content $pk" ;;
+        files)   each '&&' "pkgin pkg-content" "" "$@" ;;
     esac
 }
 
-# Build the native command for $1 (verb). Sets NATIVE, or UNSUP (and
-# optionally UNSUP_OP, naming the refused operation when it is narrower
-# than the verb, e.g. "single-package upgrade").
+# build <verb> [operand]... — build the native command. Sets NATIVE, or
+# UNSUP (and optionally UNSUP_OP, naming the refused operation when it is
+# narrower than the verb, e.g. "single-package upgrade").
 build() {
     NATIVE=""
     UNSUP=""
     UNSUP_OP=""
     REQ=""
     E=""
-    if needs_root "$1" && [ -n "$SUDO" ]; then
+    LOCAL=""
+    _verb=$1; shift
+    if needs_root "$_verb" && [ -n "$SUDO" ]; then
         E="$SUDO "
     fi
-    # raw passes args straight to the native tool (no escalation); handle it
-    # once here rather than in every builder.
-    if [ "$1" = raw ]; then
+    # install: an operand with a package-file extension is a local file.
+    # Give a bare file name a ./ so apt treats it as a path, not a name.
+    if [ "$_verb" = install ]; then
+        _nf=0; _n=$#; _i=0
+        while [ "$_i" -lt "$_n" ]; do
+            _a=$1; shift; _i=$((_i + 1))
+            case $_a in
+                *.deb|*.rpm|*.apk|*.xbps|*.pkg|*.tgz|*.txz|*.pkg.tar|*.pkg.tar.*)
+                    _nf=$((_nf + 1))
+                    case $_a in */*) ;; *) _a=./$_a ;; esac ;;
+            esac
+            set -- "$@" "$_a"
+        done
+        if [ "$_nf" -gt 0 ]; then
+            if [ "$_nf" -eq $# ]; then LOCAL=all; else LOCAL=some; fi
+        fi
+    fi
+    shquote "$@"
+    # raw passes args straight to the native tool (no escalation, no '--');
+    # handle it once here rather than in every builder.
+    if [ "$_verb" = raw ]; then
         case "$MGR" in
             xbps)    UNSUP="xbps is split across xbps-install/xbps-remove/xbps-query; call them directly" ;;
             pkg_add) UNSUP="OpenBSD uses separate tools (pkg_add, pkg_delete, pkg_info); call them directly" ;;
@@ -538,11 +809,14 @@ build() {
             *)       NATIVE="$MGR $pk" ;;
         esac
     else
-        "build_$MGR" "$1"
+        # An operand beginning with '-' gets an explicit end-of-options
+        # marker so the native tool treats it as a name, not flags.
+        [ "$DASHED" = 1 ] && pk="-- $pk"
+        "build_$MGR" "$_verb" "$@"
     fi
     # REQ is the binary the command actually invokes: its first word, after
     # any escalation prefix. A builder whose command does not start with the
-    # binary (pacman orphans' if-compound) sets REQ itself.
+    # binary (pacman autoremove's if-compound) sets REQ itself.
     if [ -z "$REQ" ] && [ -n "$NATIVE" ]; then
         REQ=${NATIVE#"$E"}
         REQ=${REQ%% *}
@@ -550,58 +824,74 @@ build() {
 }
 
 # ---------------------------------------------------------------------------
-# pkx which
+# pkx which / pkx help <command>
 # ---------------------------------------------------------------------------
 
-# show_which [verb] — with a verb, print only that mapping; otherwise the
-# full header and table.
-show_which() {
-    wfilter=${1:-}
-    case "$wfilter" in
-        in) wfilter=install ;;
-        rm) wfilter=remove ;;
-        se) wfilter=search ;;
-        up) wfilter=upgrade ;;
-        ls) wfilter=list ;;
-    esac
-    if [ -z "$wfilter" ]; then
-        print_version
-        printf 'manager:    %s (%s)\n' "$MGR" "$MGR_SOURCE"
-        if ! needs_root install; then
-            printf 'escalation: none (%s never runs as root)\n' "$MGR"
-        elif [ -n "$SUDO" ]; then
-            printf 'escalation: %s\n' "$SUDO"
-        elif [ "$ROOT" = 1 ]; then
-            printf 'escalation: none (running as root)\n'
-        else
-            printf 'escalation: none (no sudo/doas found)\n'
-        fi
-        printf 'aliases:    in=install rm=remove se=search up=upgrade ls=list\n'
-        printf '\n'
-    fi
-    wmatched=0
-    for v in install remove search info refresh upgrade upgrade+pkg outdated list installed orphans clean owns files; do
-        label=$v
-        case "$v" in
-            upgrade+pkg) v=upgrade; label="upgrade <pkg>"; pk="<pkg>" ;;
-            owns) pk="<file>" ;;
-            refresh|upgrade|list|orphans|clean|outdated) pk="" ;;
-            search) pk="<term>" ;;
-            *) pk="<pkg>" ;;
+# show_rows [verb] — print the native mapping of every package verb (or of
+# just one), with placeholders for the operands.
+show_rows() {
+    NOQUOTE=1
+    for _row in install remove search info list list+pkg outdated refresh upgrade upgrade+pkg autoremove clean owns files raw; do
+        _label=$_row
+        case $_row in
+            upgrade+pkg) _v=upgrade; _label="upgrade <pkg>"; set -- "<pkg>" ;;
+            list+pkg)    _v=list;    _label="list <pkg>";    set -- "<pkg>" ;;
+            owns)        _v=$_row; set -- "<file>" ;;
+            search)      _v=$_row; set -- "<term>" ;;
+            raw)         _v=$_row; _label="raw <args>"; set -- "<args>" ;;
+            install|remove|info|files) _v=$_row; set -- "<pkg>" ;;
+            *)           _v=$_row; set -- ;;
         esac
-        if [ -n "$wfilter" ] && [ "$v" != "$wfilter" ]; then
+        if [ -n "$WFILTER" ] && [ "$_v" != "$WFILTER" ]; then
             continue
         fi
-        wmatched=1
-        build "$v"
+        build "$_v" "$@"
         if [ -n "$NATIVE" ]; then
-            printf '  %-13s %s\n' "$label" "$NATIVE"
+            printf '  %-13s %s\n' "$_label" "$NATIVE"
         else
-            printf '  %-13s (not supported: %s)\n' "$label" "$UNSUP"
+            printf '  %-13s (not supported: %s)\n' "$_label" "$UNSUP"
         fi
     done
-    if [ -n "$wfilter" ] && [ "$wmatched" -eq 0 ]; then
-        usage_err "unknown verb '$wfilter'"
+    NOQUOTE=0
+}
+
+show_escalation() {
+    if ! needs_root install; then
+        printf 'escalation: none (%s never runs as root)\n' "$MGR"
+    elif [ -n "$SUDO" ]; then
+        printf 'escalation: %s\n' "$SUDO"
+    elif [ "$ROOT" = 1 ]; then
+        printf 'escalation: none (running as root)\n'
+    else
+        printf 'escalation: none (no sudo/doas found)\n'
+    fi
+}
+
+# verb_help <verb> — usage, description and aliases of one command, plus
+# what it runs on this system when a manager can be found.
+verb_help() {
+    verb_info "$1"
+    printf 'Usage: pkx %s\n\n%s\n' "$VSYN" "$VDESC"
+    [ -z "$VDESC2" ] || printf '%s\n' "$VDESC2"
+    if [ -n "$VALIAS" ]; then
+        _al=""
+        for _a in $VALIAS; do
+            _al="${_al:+$_al, }$_a"
+            [ "${#_a}" -eq 1 ] && _al="$_al, -$_a"
+        done
+        printf 'Aliases: %s\n' "$_al"
+    fi
+    case " $PKG_VERBS raw " in
+        *" $1 "*) ;;
+        *) return 0 ;;
+    esac
+    if resolve_mgr; then
+        resolve_sudo
+        printf '\nOn this system (%s, %s):\n' "$MGR" "$MGR_SOURCE"
+        WFILTER=$1
+        show_rows
+    else
+        printf '\n(no supported package manager detected on this system)\n'
     fi
 }
 
@@ -612,113 +902,139 @@ show_which() {
 YES=0
 DRYRUN=0
 QUIET=0
-[ -n "${PKX_QUIET:-}" ] && QUIET=1
+case "${PKX_QUIET:-}" in
+    ""|0|no|false|off) ;;
+    *) QUIET=1 ;;
+esac
+NOQUOTE=0
 WANT_HELP=0
 WANT_VERSION=0
 VIA="${PKX_MANAGER:-}"
-verb=""
+FVERB=""     # command given as a flag (-s, -i, ...)
+FVERB_SRC=""
 endopts=0
+rawmode=0    # after a 'raw' command everything is passed through verbatim
+rawn=0
+npos=0
+pos1_endopts=0
 
+# set_flag_verb <letter> — a one-letter alias used as a flag
+set_flag_verb() {
+    canon_verb "$1"
+    [ -n "$CV" ] || usage_err "unknown option '-$1'"
+    if [ -n "$FVERB" ] && [ "$FVERB" != "$CV" ]; then
+        usage_err "conflicting commands: '$FVERB_SRC' and '-$1'"
+    fi
+    FVERB=$CV
+    FVERB_SRC="-$1"
+}
+
+# Arguments are rotated through "$@": each is shifted off the front and
+# positionals are appended to the back, so after the loop "$@" holds the
+# positionals in order.
 n=$#
 i=0
 while [ "$i" -lt "$n" ]; do
     a=$1; shift; i=$((i + 1))
-    # A single -- ends flag parsing; everything after it is a verb/operand,
-    # even if it starts with '-'. Everything after the 'raw' verb is likewise
-    # passed through verbatim.
-    if [ "$endopts" = 0 ] && [ "$a" = "--" ]; then
-        endopts=1
+    if [ "$rawmode" = 1 ]; then
+        # a single -- directly after 'raw' is optional punctuation; any
+        # other token (including a later --) goes to the native tool
+        rawn=$((rawn + 1))
+        if [ "$rawn" -eq 1 ] && [ "$a" = "--" ]; then continue; fi
+        set -- "$@" "$a"
         continue
     fi
-    if [ "$verb" = raw ] || [ "$endopts" = 1 ]; then
-        if [ -z "$verb" ]; then verb=$a; else set -- "$@" "$a"; fi
-        continue
+    if [ "$endopts" = 0 ]; then
+        case "$a" in
+            --)           endopts=1; continue ;;
+            --yes)        YES=1; continue ;;
+            --dry-run)    DRYRUN=1; continue ;;
+            --quiet)      QUIET=1; continue ;;
+            --help)       WANT_HELP=1; continue ;;
+            --version)    WANT_VERSION=1; continue ;;
+            --via)
+                if [ "$i" -lt "$n" ] && [ -n "$1" ]; then
+                    VIA=$1; shift; i=$((i + 1))
+                else
+                    usage_err "--via needs a non-empty value"
+                fi
+                continue ;;
+            --via=*)
+                VIA=${a#--via=}
+                [ -n "$VIA" ] || usage_err "--via needs a non-empty value"
+                continue ;;
+            --*)          usage_err "unknown option '$a'" ;;
+            -)            usage_err "unknown option '-'" ;;
+            -*)
+                # one or more bundled short flags: -y, -yq, -yi, ...
+                _f=${a#-}
+                while [ -n "$_f" ]; do
+                    _c=${_f%"${_f#?}"}
+                    _f=${_f#?}
+                    case "$_c" in
+                        y) YES=1 ;;
+                        n) DRYRUN=1 ;;
+                        q) QUIET=1 ;;
+                        h) WANT_HELP=1 ;;
+                        V) WANT_VERSION=1 ;;
+                        *) set_flag_verb "$_c" ;;
+                    esac
+                done
+                continue ;;
+        esac
     fi
-    case "$a" in
-        -y|--yes)     YES=1 ;;
-        -n|--dry-run) DRYRUN=1 ;;
-        -q|--quiet)   QUIET=1 ;;
-        --via)
-            if [ "$i" -lt "$n" ] && [ -n "$1" ]; then
-                VIA=$1; shift; i=$((i + 1))
-            else
-                usage_err "--via needs a non-empty value"
-            fi ;;
-        --via=*)
-            VIA=${a#--via=}
-            [ -n "$VIA" ] || usage_err "--via needs a non-empty value" ;;
-        -h|--help)    WANT_HELP=1 ;;
-        -V|--version) WANT_VERSION=1 ;;
-        -*)           usage_err "unknown option '$a'" ;;
-        *)
-            if [ -z "$verb" ]; then
-                verb=$a
-            else
-                set -- "$@" "$a"
-            fi ;;
-    esac
+    set -- "$@" "$a"
+    npos=$((npos + 1))
+    # the first positional is the command (unless one was given as a flag);
+    # once it is 'raw', stop interpreting flags
+    if [ "$npos" -eq 1 ]; then
+        pos1_endopts=$endopts
+        if [ -z "$FVERB" ]; then
+            canon_verb "$a"
+            [ "$CV" = raw ] && rawmode=1
+        fi
+    fi
 done
 
-# -h/-V exit only when they are the whole request; combined with a command
-# they would silently discard it (e.g. 'pkx -V install htop' installing
-# nothing while exiting 0), so that is a usage error instead.
-if [ "$WANT_HELP" = 1 ]; then
-    [ -z "$verb" ] && [ $# -eq 0 ] || usage_err "-h/--help cannot be combined with a command"
-    usage
-    exit 0
+# The command is either a flag-style alias (-s) — then every positional is
+# an operand — or the first positional.
+verb=""
+if [ -n "$FVERB" ]; then
+    # 'pkx search -i foo' must not quietly install a package named
+    # "search": a command word next to a command flag is a conflict.
+    # (After --, a word is always an operand: 'pkx -i -- search'.)
+    if [ $# -gt 0 ] && [ "$pos1_endopts" = 0 ]; then
+        canon_verb "$1"
+        [ -z "$CV" ] || usage_err "conflicting commands: '$1' and '$FVERB_SRC'"
+    fi
+    verb=$FVERB
+elif [ $# -gt 0 ]; then
+    [ "$1" != update ] || ambiguous_update "$1"
+    canon_verb "$1"
+    [ -n "$CV" ] || usage_err "unknown command '$1'"
+    verb=$CV
+    shift
 fi
+
+# -V exits only when it is the whole request; combined with a command it
+# would silently discard it (e.g. 'pkx -V install htop' installing nothing
+# while exiting 0), so that is a usage error instead.
 if [ "$WANT_VERSION" = 1 ]; then
     [ -z "$verb" ] && [ $# -eq 0 ] || usage_err "-V/--version cannot be combined with a command"
     print_version
     exit 0
 fi
 
-# verb aliases
-case "$verb" in
-    in) verb=install ;;
-    rm) verb=remove ;;
-    se) verb=search ;;
-    up) verb=upgrade ;;
-    ls) verb=list ;;
-esac
-
-case "$verb" in
-    "")      usage_err "missing command" ;;
-    help)    usage; exit 0 ;;
-    version) print_version; exit 0 ;;
-    install|remove|search|info|refresh|upgrade|outdated|list|installed|orphans|clean|owns|files|which|raw) ;;
-    *)       usage_err "unknown command '$verb'" ;;
-esac
-
-# ---------------------------------------------------------------------------
-# resolve manager and privileges
-# ---------------------------------------------------------------------------
-
-if [ -n "$VIA" ]; then
-    MGR=$(canon_mgr "$VIA")
-    [ -n "$MGR" ] || usage_err "unknown manager '$VIA' (supported: $SUPPORTED_MGRS)"
-    MGR_SOURCE="forced via --via/PKX_MANAGER"
-else
-    MGR=$(detect_mgr)
-    if [ -z "$MGR" ]; then
-        warn "no supported package manager found on this system"
-        if has rpm-ostree; then
-            warn "this looks like an image-based system: use 'rpm-ostree install <pkg>' directly"
-        elif has transactional-update; then
-            warn "this looks like openSUSE MicroOS: use 'transactional-update pkg install <pkg>'"
-        elif has nix-env || has nix; then
-            warn "this looks like Nix: use 'nix profile install' or 'nix-env -iA'"
-        fi
-        warn "supported: $SUPPORTED_MGRS"
-        exit 1
-    fi
-    MGR_SOURCE="auto-detected"
+# --help with a command shows that command's help, like 'pkx help <command>'.
+# Nothing is run either way.
+if [ "$WANT_HELP" = 1 ]; then
+    if [ -z "$verb" ]; then usage; else verb_help "$verb"; fi
+    exit 0
 fi
 
-resolve_sudo
-
 # ---------------------------------------------------------------------------
-# validate arguments per verb
+# validate arguments per verb (before touching the system, so usage errors
+# win over environment errors)
 # ---------------------------------------------------------------------------
 
 for _a in "$@"; do
@@ -726,34 +1042,60 @@ for _a in "$@"; do
 done
 
 case "$verb" in
-    install|remove|search|info|owns|files|raw|installed)
+    "") usage_err "missing command" ;;
+    install|remove|search|info|owns|files|raw)
         [ $# -gt 0 ] || usage_err "'$verb' needs at least one argument" ;;
-    upgrade) ;;  # no operands = upgrade everything; operands = just those
-    which)
-        [ $# -le 1 ] || usage_err "'which' takes at most one verb" ;;
-    refresh|list|orphans|clean|outdated)
+    upgrade|list) ;;  # no operands = everything; operands = just those
+    which|help)
+        [ $# -le 1 ] || usage_err "'$verb' takes at most one command"
+        if [ $# -eq 1 ]; then
+            [ "$1" != update ] || ambiguous_update "$1"
+            canon_verb "$1"
+            [ -n "$CV" ] || usage_err "unknown command '$1'"
+            set -- "$CV"
+        fi ;;
+    refresh|outdated|autoremove|clean|version)
         [ $# -eq 0 ] || usage_err "'$verb' takes no arguments" ;;
 esac
 
+case "$verb" in
+    help)
+        if [ $# -eq 0 ]; then usage; else verb_help "$1"; fi
+        exit 0 ;;
+    version)
+        print_version
+        exit 0 ;;
+esac
+
+# ---------------------------------------------------------------------------
+# resolve manager and privileges
+# ---------------------------------------------------------------------------
+
+resolve_mgr || no_mgr_found
+resolve_sudo
+
 if [ "$verb" = which ]; then
-    show_which "${1:-}"
+    WFILTER=${1:-}
+    if [ -n "$WFILTER" ]; then
+        case " $PKG_VERBS raw " in
+            *" $WFILTER "*) ;;
+            *) usage_err "'$WFILTER' has no native mapping" ;;
+        esac
+    else
+        print_version
+        printf 'manager:    %s (%s)\n' "$MGR" "$MGR_SOURCE"
+        show_escalation
+        printf '\n'
+    fi
+    show_rows
     exit 0
-fi
-
-shquote "$@"
-
-# An operand beginning with '-' gets an explicit end-of-options marker so
-# the native tool treats it as a name, not flags. raw is exempt: its
-# operands are passed through verbatim by design.
-if [ "$DASHED" = 1 ] && [ "$verb" != raw ]; then
-    pk="-- $pk"
 fi
 
 # ---------------------------------------------------------------------------
 # build and run
 # ---------------------------------------------------------------------------
 
-build "$verb"
+build "$verb" "$@"
 
 if [ -z "$NATIVE" ]; then
     [ -n "$UNSUP_OP" ] || UNSUP_OP="'$verb'"
