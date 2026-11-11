@@ -186,7 +186,9 @@ no xbps "xbps-install" raw -- foo
 ok emerge "sudo emerge foo"                                      install foo
 ok emerge "sudo emerge --deselect foo && sudo emerge --depclean foo" remove foo
 ok emerge "emerge --search foo"                                  search foo
-ok emerge "emerge --pretend --verbose foo"                       info foo
+# exact-name search (description, homepage, versions); '+' is escaped
+ok emerge "emerge --search '%^foo\$'"                            info foo
+ok emerge "emerge --search '%^gtk\\+\$' '%^app-editors/vim\$'"    info gtk+ app-editors/vim
 ok emerge "sudo emerge --sync"                                   refresh
 ok emerge "sudo emerge --sync && sudo emerge --update --deep --newuse @world" upgrade
 ok emerge "qlist -Iv"                                            list
@@ -657,7 +659,13 @@ ok yum     "sudo yum-config-manager --add-repo https://x/y.repo" repo add https:
 ok pacman  "pacman-conf --repo-list"                     repo
 no pacman  "pacman.conf"                                 repo add https://x
 ok apk     "cat /etc/apk/repositories"                   repo
-ok apk     "printf '%s\\n' https://x/main | sudo tee -a /etc/apk/repositories" repo add https://x/main
+# apk: append the line once, then fetch the index (unusable before that);
+# a name makes it a tagged repository (@name), with or without the @
+APKADD1="if grep -qxF -e https://x/main /etc/apk/repositories; then echo 'pkx: already in /etc/apk/repositories'; else printf '%s\\n' https://x/main | sudo tee -a /etc/apk/repositories; fi && sudo apk update"
+APKADD2="if grep -qxF -e '@edge https://x/main' /etc/apk/repositories; then echo 'pkx: already in /etc/apk/repositories'; else printf '%s\\n' '@edge https://x/main' | sudo tee -a /etc/apk/repositories; fi && sudo apk update"
+ok apk     "$APKADD1"                                    repo add https://x/main
+ok apk     "$APKADD2"                                    repo add https://x/main edge
+ok apk     "$APKADD2"                                    repo add https://x/main @edge
 ok zypper  "zypper repos"                                repo
 ok zypper  "sudo zypper addrepo https://x/r myrepo"      repo add https://x/r myrepo
 ok xbps    "xbps-query -L"                               repo

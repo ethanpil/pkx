@@ -658,7 +658,15 @@ build_apk() {
         rdeps)   NATIVE="apk info -r $pk" ;;
         hold|unhold) UNSUP="apk pins versions with world constraints instead: 'pkx install <pkg>=<version>' holds it, 'pkx install <pkg>' releases it" ;;
         repo-list) NATIVE="cat /etc/apk/repositories" ;;
-        repo-add)  NATIVE="printf '%s\\n' $pk | ${E}tee -a /etc/apk/repositories" ;;
+        repo-add)
+            # apk has no command for this: repositories are lines in one
+            # file. A name makes it a tagged repository ("@name <url>"),
+            # whose packages install only when asked for as <pkg>@<name>.
+            # The line is added once, then the index is fetched -- apk
+            # cannot use a repository before 'apk update'.
+            if [ $# -eq 2 ]; then q1 "@${2#@} $1"; else q1 "$1"; fi
+            REQ=apk
+            NATIVE="if grep -qxF -e $_q /etc/apk/repositories; then echo 'pkx: already in /etc/apk/repositories'; else printf '%s\\n' $_q | ${E}tee -a /etc/apk/repositories; fi && ${E}apk update" ;;
     esac
 }
 
@@ -772,7 +780,16 @@ build_emerge() {
         remove)  NATIVE="${E}emerge --deselect $pk && ${E}emerge --depclean $pk" ;;
         purge)   unsup_purge_kept "portage (CONFIG_PROTECT)" ;;
         search)  search_and "emerge --search" para "$@" ;;
-        info)    NATIVE="emerge --pretend --verbose $pk" ;;
+        info)
+            # exact-name search: description, homepage, license, latest and
+            # installed versions. '%' makes the key a regex (anchored here);
+            # '+' is the only regex character a package name can contain.
+            NATIVE="emerge --search"
+            for _a in "$@"; do
+                _k=$(printf '%s' "$_a" | sed 's/+/\\+/g')
+                q1 "%^$_k\$"
+                NATIVE="$NATIVE $_q"
+            done ;;
         refresh) NATIVE="${E}emerge --sync" ;;
         upgrade)
             # --oneshot keeps an upgraded dependency out of @world

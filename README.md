@@ -204,7 +204,7 @@ command for every one of these mappings.
 | `hold <pkg>` | `apt-mark hold` | `dnf versionlock add`¹² | *n/a*² | *n/a*² | `zypper addlock` | `brew pin` |
 | `unhold` | `apt-mark unhold` | `dnf versionlock delete`¹² | *n/a*² | *n/a*² | `zypper removelock` | `brew unpin` |
 | `repo list` | `apt-cache policy` | `dnf repolist` | `pacman-conf --repo-list` | `cat /etc/apk/repositories` | `zypper repos` | `brew tap` |
-| `repo add` | `add-apt-repository` | `dnf config-manager --add-repo`¹² | *n/a*² | `… \| tee -a /etc/apk/repositories` | `zypper addrepo` | `brew tap` |
+| `repo add` | `add-apt-repository` | `dnf config-manager --add-repo`¹² | *n/a*² | `tee -a /etc/apk/repositories && apk update`¹³ | `zypper addrepo` | `brew tap` |
 
 | verb | yum | xbps | emerge | port | pkg (FreeBSD) | pkg_add (OpenBSD) | pkgin (NetBSD) |
 |---|---|---|---|---|---|---|---|
@@ -213,7 +213,7 @@ command for every one of these mappings.
 | `remove` | `yum remove` | `xbps-remove` | `--deselect && --depclean` | `port uninstall` | `pkg delete` | `pkg_delete` | `pkgin remove` |
 | `purge` | *n/a*² | *n/a*² | *n/a*² | *n/a*² | *n/a*² | `pkg_delete -c` | *n/a*² |
 | `search` | `yum search`¹¹ | `xbps-query -Rs`¹¹ | `emerge --search`¹¹ | `port search`¹¹ | `pkg search`¹¹ | `pkg_info -Q`¹¹ | `pkgin search`¹¹ |
-| `info` | `yum info` | `xbps-query -RS`⁹ | `emerge -pv` | `port info` | `pkg search -e -f`⁹ | `pkg_info`⁵ | `pkgin pkg-descr`⁹ |
+| `info` | `yum info` | `xbps-query -RS`⁹ | `emerge --search '%^<pkg>$'` | `port info` | `pkg search -e -f`⁹ | `pkg_info`⁵ | `pkgin pkg-descr`⁹ |
 | `refresh` | `yum makecache` | `xbps-install -S` | `emerge --sync` | `port sync` | `pkg update` | *n/a*² | `pkgin update` |
 | `upgrade` | `yum update` | `xbps-install -Su` | `--sync && -uDN @world` | `selfupdate && upgrade outdated` | `pkg upgrade` | `pkg_add -u` | `update && full-upgrade` |
 | `upgrade <pkg>` | `yum update` | `xbps-query && xbps-install -Su`¹⁰ | `--sync && emerge -1u` | `selfupdate && upgrade` | `pkg upgrade` | `pkg_add -u` | `update && install` |
@@ -272,6 +272,7 @@ form by whether a `dnf5` binary exists: `dnf repoquery
 --from-repofile=<url>`. dnf4 needs dnf-plugins-core for `config-manager`
 and python3-dnf-plugin-versionlock for `versionlock` (yum:
 yum-plugin-versionlock). `repo add` takes the URL of a `.repo` file.
+¹³ See [Adding a repository on Alpine](#adding-a-repository-on-alpine).
 
 Some mappings call a standard helper that isn't always installed —
 `pactree` (pacman-contrib), `equery`/`eclean-dist` (gentoolkit),
@@ -364,7 +365,11 @@ operands, `repo list` — always run unprivileged.
 
 `list`, `owns` and `files` use `qlist`/`qfile` from **portage-utils**;
 `clean`, `deps` and `rdeps` use `eclean-dist`/`equery` from **gentoolkit**;
-`repo add` uses **eselect-repository** — the standard Gentoo admin tools. If one is missing, pkx checks the leading binary before running and
+`repo add` uses **eselect-repository** — the standard Gentoo admin tools.
+`info` is `emerge --search '%^<pkg>$'`: an exact-name match (the `%` makes
+the key a regex, anchored by pkx) that prints the description, homepage,
+license and the latest available and installed versions; use a
+`category/name` operand to pick one when a name exists in several categories. If one is missing, pkx checks the leading binary before running and
 tells you which tool to install rather than failing mid-command; `pkx -n
 <verb>` shows you what would have run.
 
@@ -377,6 +382,28 @@ pkx picks between them from `/etc/os-release`.
 `pkx autoremove` on **yum** uses `yum autoremove`, which exists on yum ≥ 3.4.3
 (RHEL/CentOS 7+). On the much older yum of RHEL/CentOS 6 there is no
 `autoremove`, and the command will report that.
+
+#### Adding a repository on Alpine
+
+apk has no command for adding a repository: repositories are simply lines in
+`/etc/apk/repositories`. So `pkx repo add <url>` appends the line (only if it
+isn't there already, so re-running it is harmless) and then runs
+`apk update`, because apk can't use a repository until its index has been
+fetched:
+
+```
+$ pkx repo add https://dl-cdn.alpinelinux.org/alpine/edge/testing testing
+pkx: running: if grep -qxF -e '@testing https://…/edge/testing' /etc/apk/repositories; then …; else printf '%s\n' '@testing https://…/edge/testing' | sudo tee -a /etc/apk/repositories; fi && sudo apk update
+```
+
+The optional name makes it a **tagged repository** (`@testing <url>`), apk's
+way of adding a repository without letting it take over: its packages are
+installed only when asked for explicitly, as `pkx install hyfetch@testing`;
+a plain `pkx install hyfetch` reports the package as "masked in: @testing".
+Without a name, the repository is an ordinary one and its packages are
+candidates for every install and upgrade — usually not what you want for
+edge/testing on a stable release. A third-party repository also needs its
+signing key in `/etc/apk/keys/`, or `apk update` reports it as untrusted.
 
 `pkx clean` on **Alpine** runs `apk cache clean`. With no local package
 cache configured (the default on minimal installs and the official Docker
@@ -572,8 +599,12 @@ dnf5 5.4 and zypper 1.14 in chroots, in addition to the dry-run suite.
 - `hold [pkg]...` / `unhold <pkg>...` — pin packages at their version, or
   list held ones (apt, dnf, yum, zypper, xbps, brew, FreeBSD pkg; refused
   with the native alternative elsewhere).
+- `info` on Gentoo is an exact-name `emerge --search` (description,
+  homepage, versions) instead of `emerge --pretend --verbose`, which showed
+  a build plan rather than package details.
 - `repo [list]` and `repo add <source> [name]` — list or add repositories
-  (list on 11 managers, add on 7).
+  (list on 11 managers, add on 7). On Alpine the name makes it a tagged
+  repository (`pkg@name`), and the index is fetched right away.
 - `pkx completion bash|zsh|fish` — completion scripts generated from the
   command table.
 - A missing helper tool is reported with the package that provides it
