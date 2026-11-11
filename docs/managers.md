@@ -49,7 +49,7 @@ command for every one of these mappings.
 | `refresh` | `apt-get update` | `dnf makecache` | *refused*¹ | `apk update` | `zypper refresh` | `brew update` |
 | `upgrade` | `update; dist-upgrade` | `dnf upgrade --refresh` | `pacman -Syu` | `update && upgrade` | `refresh && update` | `update && upgrade` |
 | `upgrade <pkg>` | `update; install --only-upgrade` | `dnf upgrade --refresh` | *refused*⁴ | `update && upgrade` | `refresh && update`⁴ | `update && upgrade` |
-| `outdated`⁶ | `apt list --upgradable` | `dnf check-update` | `pacman -Qu` | `apk list -u` | `zypper list-updates` | `brew outdated` |
+| `outdated`⁶ | `apt list --upgradable` | `dnf check-update` | `pacman -Qu` | `apk list -u` | `zypper list-updates` | `brew outdated --verbose` |
 | `list` | `apt list --installed` | `rpm -qa` | `pacman -Q` | `apk list --installed` | `zypper search --installed-only` | `brew list --versions` |
 | `list <pkg>` | `dpkg-query -W … \| grep`⁸ | `rpm -q` | `pacman -Q` | `apk info -e` | `rpm -q` | `brew list --versions` |
 | `autoremove` | `apt-get autoremove` | `dnf autoremove` | `-Rns $(pacman -Qdtq)`³ | *n/a*² | *n/a*² | `brew autoremove` |
@@ -57,8 +57,8 @@ command for every one of these mappings.
 | `clean` | `apt-get clean` | `dnf clean all` | `pacman -Sc` | `apk cache clean` | `zypper clean --all` | `brew cleanup` |
 | `owns` | `dpkg -S` | `rpm -qf` | `pacman -Qo` | `apk info --who-owns` | `rpm -qf` | *n/a*² |
 | `files` | `dpkg -L` | `rpm -ql` | `pacman -Ql` | `apk info -L` | `rpm -ql` | `brew list --verbose` |
-| `deps` | `apt-cache depends` | `dnf repoquery --requires --resolve`¹² | `pactree -s -d1 -u`⁹ | `apk info -R` | `zypper info --requires` | `brew deps` |
-| `rdeps` | `apt-cache rdepends --installed` | `dnf repoquery --installed --whatrequires` | `pactree -r -d1 -u`⁹ | `apk info -r` | `zypper search --installed-only --requires-pkg` | `brew uses --installed` |
+| `deps` | `apt-cache depends` | `dnf repoquery --requires --resolve`¹² | `pactree -s -d1 -u`⁹ | `apk info -R` | `zypper info --requires` | `brew deps --direct`⁹ |
+| `rdeps` | `apt-cache rdepends --installed` | `dnf repoquery --installed --whatrequires` | `pactree -r -d1 -u`⁹ | `apk info -r` | `zypper search --installed-only --requires-pkg` | `brew uses --installed`⁹ |
 | `hold` | `apt-mark showhold` | `dnf versionlock list`¹² | *n/a*² | *n/a*² | `zypper locks` | `brew list --pinned` |
 | `hold <pkg>` | `apt-mark hold` | `dnf versionlock add`¹² | *n/a*² | *n/a*² | `zypper addlock` | `brew pin` |
 | `unhold` | `apt-mark unhold` | `dnf versionlock delete`¹² | *n/a*² | *n/a*² | `zypper removelock` | `brew unpin` |
@@ -78,7 +78,7 @@ command for every one of these mappings.
 | `upgrade <pkg>` | `yum update` | `xbps-query && xbps-install -Su`¹⁰ | `--sync && emerge -1u` | `selfupdate && upgrade` | `pkg upgrade` | `pkg_add -u` | `update && install` |
 | `outdated`⁶ | `yum check-update` | `xbps-install -un` | `emerge -puDN @world` | `port outdated` | `pkg version -vRL=` | `pkg_add -un`⁶ | *n/a*² |
 | `list` | `rpm -qa` | `xbps-query -l` | `qlist -Iv` | `port installed` | `pkg info` | `pkg_info` | `pkgin list` |
-| `list <pkg>` | `rpm -q` | `xbps-query -p pkgver`⁹ | `qlist -Iv` | `port -q installed \| grep .`⁹ | `pkg info` | `pkg_info -e`⁹ | `pkg_info -e`⁹ |
+| `list <pkg>` | `rpm -q` | `xbps-query -p pkgver`⁹ | `qlist -Iv`⁹ | `port -q installed \| grep .`⁹ | `pkg info` | `pkg_info -e`⁹ | `pkg_info -e`⁹ |
 | `autoremove` | `yum autoremove` | `xbps-remove -o` | `emerge --depclean` | `port uninstall leaves` | `pkg autoremove` | `pkg_delete -a` | `pkgin autoremove` |
 | `orphans` | *n/a*² | `xbps-remove -on` | `emerge -p --depclean` | `port echo leaves` | `pkg autoremove --dry-run` | `pkg_delete -an` | `pkgin -n autoremove` |
 | `clean` | `yum clean all` | `xbps-remove -O` | `eclean-dist` | `port clean --all` | `pkg clean` | *n/a*² | `pkgin clean` |
@@ -106,27 +106,38 @@ so use `pkx search` for repository lookup.
 upgrades are available, and anything else is the native tool's error.
 `dnf`/`yum check-update` already work that way; for the others pkx passes
 the output through untouched while counting the outdated-package lines
-(`pacman -Qu`'s exit 1 for "nothing to do" becomes 0). OpenBSD's
-`pkg_add -un` is the one exception: its exit status passes through.
+(`pacman -Qu`'s exit 1 for "nothing to do" becomes 0). Because the output
+goes through a pipe, pkx adds `-o Apt::Cmd::Disable-Script-Warning=1` to
+apt (which otherwise warns that it "does not have a stable CLI
+interface") and `--verbose` to brew (which otherwise drops the versions).
+OpenBSD's `pkg_add -un` is the one exception: its exit status passes
+through.
 ⁷ An operand ending in a package-file extension (`.deb`, `.rpm`, `.apk`,
-`.pkg.tar.*`, `.xbps`, `.pkg`, `.tgz`, `.txz`) is a local file; a bare file
-name gets `./` so apt treats it as a path. pacman, FreeBSD `pkg` and pkgin
+`.pkg.tar.*`, `.xbps`, `.pkg`, `.tgz`, `.txz`) is a local file; a relative
+path gets `./` so apt treats it as a path (apt reads `dir/foo.deb` as package
+`dir` from release `foo.deb`), while absolute paths and URLs are passed
+as given. pacman, FreeBSD `pkg` and pkgin
 need a different command for files, so mixing files and repository names in
 one `install` is refused there (exit 3) — run two commands.
 ⁸ `dpkg-query -W -f='${Package} ${Version} ${db:Status-Status}\n' <pkg> | grep ' installed$'`,
 once per package. `dpkg -s` can't be used: it exits 0 for a removed
 package whose config files remain (state `rc`).
 ⁹ These tools accept exactly one package/pattern per call (xbps-query
-errors with "too many arguments"), so pkx runs them once per operand,
-joined with `&&`.
+errors with "too many arguments"), or, given several, answer for any one
+of them (`qlist`) or only for what they have in common (`brew deps`,
+`brew uses`), so pkx runs them once per operand, joined with `&&`.
 ¹⁰ `xbps-install -u` would *install* a named package that is missing, so
 pkx first checks each one with `xbps-query -p pkgver` (exit 2 if absent).
 ¹¹ Several search terms mean *all* of them, everywhere. apt-cache and
 pacman already work that way; for the rest pkx searches for the first term
-and keeps only results that also match the others (`… | grep -i -e <term>`,
-or an awk filter over whole result blocks for port and emerge).
+and keeps only results that also contain the others, as plain text and
+ignoring case (`… | grep -i -F -e <term>`, or an awk filter over whole
+result blocks for port and emerge). So `pkx search lib c++` finds the C++
+libraries everywhere; only the first term is passed to the native search,
+which treats it the native way (a regex for some tools).
 ¹² dnf5 (Fedora 41+) spells two of these differently, and pkx picks the
-form by whether a `dnf5` binary exists: `dnf repoquery
+form by asking `dnf --version` (Fedora 39/40 can have a separate `dnf5`
+binary installed while `dnf` is still dnf4): `dnf repoquery
 --providers-of=requires` and `dnf config-manager addrepo
 --from-repofile=<url>`. dnf4 needs dnf-plugins-core for `config-manager`
 and python3-dnf-plugin-versionlock for `versionlock` (yum:
@@ -138,7 +149,8 @@ Some mappings call a standard helper that isn't always installed —
 `qlist`/`qfile` (portage-utils), `eselect repository`
 (eselect-repository), `repoquery`/`yum-config-manager` (yum-utils),
 `add-apt-repository` (software-properties-common). pkx checks before
-running and names the package to install.
+running and names the package to install (for `eselect repository`, it
+checks that eselect has the module, not just that eselect exists).
 
 ## Notes by manager and command
 
@@ -173,7 +185,9 @@ shows you what would have run.
 the key a regex, anchored by pkx) that prints the description, homepage,
 license and the latest available and installed versions. Use a
 `category/name` operand to pick one when a name exists in several
-categories.
+categories; pkx then adds emerge's `@` prefix (`'%@^<category/name>$'`),
+which asks for a category/name match explicitly (current portage also
+infers it from the `/`; older releases need the prefix).
 
 ### Rolling releases and legacy tools
 
@@ -310,7 +324,7 @@ dependency out of the @world set, so `pkx autoremove` can still reclaim it.)
 `refresh` only updates the index. `upgrade` with no arguments refreshes and
 then upgrades everything (a compound command where the native tool needs one
 — dry-run shows exactly what will execute, e.g.
-`apt-get update && apt-get dist-upgrade`); with arguments it upgrades just
+`apt-get update; apt-get dist-upgrade`); with arguments it upgrades just
 those packages.
 
 ## Related tools

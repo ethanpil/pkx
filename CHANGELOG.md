@@ -1,6 +1,9 @@
 # Changelog
 
-## 0.5.0 — unreleased
+## 0.5.0 — 2026-11-11
+
+Release file SHA-256 (`pkx` at tag `v0.5.0`):
+`925dc400a8cd6d6f1a8686a73d07155427cb86ba8be7192ecf26597a0f7ab4db`
 
 Verified against real apk 3.0, pacman 7.1, xbps 0.60, apt/dpkg 1.22,
 dnf5 5.4 and zypper 1.14 in chroots, in addition to the dry-run suite.
@@ -24,8 +27,11 @@ dnf5 5.4 and zypper 1.14 in chroots, in addition to the dry-run suite.
   used to exit 0 having done nothing.
 - `installed <pkg>` folded into `list [pkg]...`: no operands lists
   everything, operands check them (exit 0 = all installed). `installed`
-  still works as an alias. This also ends the one-typo gap between the
-  destructive `install` and the read-only `installed`.
+  still works as an alias, and still needs at least one package (exit 2
+  otherwise, as in 0.4.0), so a script whose package variable is empty
+  can't mistake "list everything" for "it is installed". This also ends
+  the one-typo gap between the destructive `install` and the read-only
+  `installed`.
 - `pkx <command> --help` / `pkx -h <command>` show that command's help and
   run nothing (previously a usage error). `pkx help <command>` does the same.
 - Detection reads `/etc/os-release` first, so a distro's own manager wins
@@ -42,8 +48,9 @@ dnf5 5.4 and zypper 1.14 in chroots, in addition to the dry-run suite.
 - Combined short flags (`-yq`).
 - `pkx update` explains that it is ambiguous instead of "unknown command".
 - Local package files: `pkx install ./foo.pkg.tar.zst` uses `pacman -U`,
-  FreeBSD uses `pkg add`, NetBSD `pkg_add`; a bare `foo.deb` gets `./` so
-  apt treats it as a path; managers that cannot install files say so.
+  FreeBSD uses `pkg add`, NetBSD `pkg_add`; a relative path (`foo.deb`,
+  `debs/foo.deb`) gets `./` so apt treats it as a path; managers that
+  cannot install files say so.
 - `pkx which` also shows the `raw` mapping, and `which`/`help` accept
   aliases.
 - `purge <pkg>...` — uninstall and delete config files (apt, pacman,
@@ -89,6 +96,25 @@ dnf5 5.4 and zypper 1.14 in chroots, in addition to the dry-run suite.
   usage error instead of ignoring the extra arguments.
 - pkgin `outdated` refusal now points at the real preview
   (`pkgin -n full-upgrade`).
+- From a code review of this release:
+  - The no-terminal `-y` rule is derived from the commands themselves (a
+    command can ask exactly when it takes an assume-yes flag) instead of a
+    separate table that could drift; `pkx clean` on xbps no longer needs
+    `-y`, because `xbps-remove -O` never asks.
+  - Extra search terms are plain text on every manager (they were regexes,
+    with different dialects for grep and awk, so `c++` matched almost
+    everything on MacPorts and `[x` was an error).
+  - `outdated` keeps apt's and brew's normal output while pkx counts it.
+  - dnf5 is detected by asking `dnf --version`, not by a `dnf5` binary
+    existing next to dnf4.
+  - Gentoo: `list a b` checks every package, `repo add` refuses a name and
+    checks for the eselect `repository` module, and `info` passes
+    category/name keys with emerge's `@` prefix.
+  - Homebrew: `deps`/`rdeps` answer for each formula (brew prints only
+    what several formulae share) and `deps` is direct dependencies only.
+  - Local files: any relative path (`debs/foo.deb`) gets `./` for apt.
+  - `pkx which help` is a usage error even with no package manager, and
+    bash completion understands `--via=<mgr>`.
 
 ## 0.4.0 — 2026-07-16
 

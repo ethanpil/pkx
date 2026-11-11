@@ -10,8 +10,10 @@
 #                  e.g. PKX_SH="busybox sh" or PKX_SH="bash --posix"
 
 # Don't inherit a caller's exported IFS: the harness word-splits $PKX_SH
-# and relies on default splitting throughout.
-unset IFS
+# and relies on default splitting throughout. Nor pkx's own settings: a
+# developer's exported PKX_MANAGER would bypass the detection tests, and
+# PKX_QUIET would hide the teaching line they check.
+unset IFS PKX_MANAGER PKX_QUIET PKX_SUDO PKX_OS_RELEASE
 
 PKX=${PKX:-$(dirname "$0")/../pkx}
 PKX_SH=${PKX_SH:-sh}
@@ -188,7 +190,8 @@ ok emerge "sudo emerge --deselect foo && sudo emerge --depclean foo" remove foo
 ok emerge "emerge --search foo"                                  search foo
 # exact-name search (description, homepage, versions); '+' is escaped
 ok emerge "emerge --search '%^foo\$'"                            info foo
-ok emerge "emerge --search '%^gtk\\+\$' '%^app-editors/vim\$'"    info gtk+ app-editors/vim
+# a category/name key needs emerge's '@' to be matched against the full name
+ok emerge "emerge --search '%^gtk\\+\$' '%@^app-editors/vim\$'"   info gtk+ app-editors/vim
 ok emerge "sudo emerge --sync"                                   refresh
 ok emerge "sudo emerge --sync && sudo emerge --update --deep --newuse @world" upgrade
 ok emerge "qlist -Iv"                                            list
@@ -325,7 +328,7 @@ ok apt     "sudo apt-get update; sudo apt-get install --only-upgrade foo" up foo
 ok apt     "sudo apt-get update; sudo apt-get install --only-upgrade foo" upgrade -- foo
 
 # --- outdated (list upgradable, read-only, no sudo) --------------------------
-ok apt     "apt list --upgradable"                       outdated
+ok apt     "apt -o Apt::Cmd::Disable-Script-Warning=1 list --upgradable" outdated
 ok dnf     "dnf check-update"                            outdated
 ok yum     "yum check-update"                            outdated
 ok pacman  "pacman -Qu"                                  outdated
@@ -333,7 +336,7 @@ ok apk     "apk list -u"                                 outdated
 ok zypper  "zypper list-updates"                         outdated
 ok xbps    "xbps-install -un"                            outdated
 ok emerge  "emerge --pretend --update --deep --newuse @world" outdated
-ok brew    "brew outdated"                               outdated
+ok brew    "brew outdated --verbose"                     outdated
 ok port    "port outdated"                               outdated
 ok pkg     "pkg version -vRL="                           outdated
 ok pkg_add "pkg_add -un"                                 outdated
@@ -353,6 +356,7 @@ ok zypper  "rpm -q foo"                                  list foo
 ok xbps    "xbps-query -p pkgver foo"                    list foo
 ok xbps    "xbps-query -p pkgver foo && xbps-query -p pkgver bar" list foo bar
 ok emerge  "qlist -Iv foo"                               list foo
+ok emerge  "qlist -Iv foo && qlist -Iv bar"              list foo bar
 ok brew    "brew list --versions foo"                    list foo
 ok port    "port -q installed foo | grep ."              list foo
 ok port    "port -q installed foo | grep . && port -q installed bar | grep ." list foo bar
@@ -362,19 +366,21 @@ ok pkg_add "pkg_info -e foo && pkg_info -e bar"          list foo bar
 ok pkgin   "pkg_info -e foo"                             list foo
 # 'installed' is an alias of list (with and without operands)
 ok dnf     "rpm -q foo"                                  installed foo
-ok dnf     "rpm -qa"                                     installed
+# ...but 'installed' alone is an error, as in 0.4.0: an unset variable as
+# its operand must not list everything and report success
+err installed
 
 # --- single-argument tools run once per operand ------------------------------
-ok xbps    "xbps-query -Rs foo | grep -i -e bar"         search foo bar
+ok xbps    "xbps-query -Rs foo | grep -i -F -e bar"         search foo bar
 ok xbps    "xbps-query -RS foo && xbps-query -RS bar"    info foo bar
 ok xbps    "xbps-query -f foo && xbps-query -f bar"      files foo bar
 ok xbps    "xbps-query -o /a && xbps-query -o /b"        owns /a /b
-ok pkg     "pkg search foo | grep -i -e bar"             search foo bar
+ok pkg     "pkg search foo | grep -i -F -e bar"             search foo bar
 ok pkg     "pkg search -e -f foo && pkg search -e -f bar" info foo bar
 ok pkg     "pkg which /a && pkg which /b"                owns /a /b
-ok pkg_add "pkg_info -Q foo | grep -i -e bar"           search foo bar
+ok pkg_add "pkg_info -Q foo | grep -i -F -e bar"           search foo bar
 ok pkg_add "pkg_info -E /a && pkg_info -E /b"            owns /a /b
-ok pkgin   "pkgin search foo | grep -i -e bar"           search foo bar
+ok pkgin   "pkgin search foo | grep -i -F -e bar"           search foo bar
 ok pkgin   "pkgin pkg-descr foo && pkgin pkg-descr bar"  info foo bar
 ok pkgin   "pkgin pkg-content foo && pkgin pkg-content bar" files foo bar
 ok xbps    "xbps-query -RS -- -foo"                      info -- -foo
@@ -398,6 +404,10 @@ no emerge  "ebuilds"                                     install foo.tgz
 no brew    "installer -pkg"                              install foo.pkg
 no port    "installer -pkg"                              install foo.pkg
 ok apt     "sudo apt-get install ./-x.deb"               install -- -x.deb
+# apt reads 'debs/foo.deb' as package 'debs' from release 'foo.deb'
+ok apt     "sudo apt-get install ./debs/foo.deb ../foo.deb" install debs/foo.deb ../foo.deb
+ok dnf     "sudo dnf install https://x/foo.rpm"          install https://x/foo.rpm
+ok yum     "sudo yum install ./foo.rpm"                  install foo.rpm
 
 # --- generic raw path for more managers -------------------------------------
 ok dnf    "dnf history"                                          raw -- history
@@ -590,6 +600,13 @@ err orphans foo
 # --- deps / rdeps ------------------------------------------------------------
 ok apt     "apt-cache depends foo"                       deps foo
 ok apt     "apt-cache rdepends --installed foo"          rdeps foo
+# the dnf4 spelling; a host whose dnf is dnf5 (Fedora 41+) gets the dnf5
+# one, which is asserted against a stub further down
+if dnf --version 2>/dev/null | grep -q '^dnf5'; then
+    echo "skip: dnf4 deps assertion (dnf5 host)"
+else
+    ok dnf "dnf repoquery --requires --resolve foo"      deps foo
+fi
 ok dnf     "dnf repoquery --installed --whatrequires foo" rdeps foo
 ok yum     "yum deplist foo"                             deps foo
 ok yum     "repoquery --installed --whatrequires foo"    rdeps foo
@@ -603,8 +620,11 @@ ok xbps    "xbps-query -Rx foo && xbps-query -Rx bar"    deps foo bar
 ok xbps    "xbps-query -X foo"                           rdeps foo
 ok emerge  "equery depgraph --depth=1 foo"               deps foo
 ok emerge  "equery depends foo"                          rdeps foo
-ok brew    "brew deps foo"                               deps foo
+ok brew    "brew deps --direct foo"                      deps foo
 ok brew    "brew uses --installed foo"                   rdeps foo
+# brew deps/uses would print only what several formulae have in common
+ok brew    "brew deps --direct foo && brew deps --direct bar" deps foo bar
+ok brew    "brew uses --installed foo && brew uses --installed bar" rdeps foo bar
 ok port    "port deps foo"                               deps foo
 ok port    "port dependents foo"                         rdeps foo
 ok pkg     "pkg rquery '%dn-%dv' foo"                    deps foo
@@ -624,6 +644,8 @@ ok dnf     "sudo dnf versionlock add foo"                hold foo
 ok dnf     "dnf versionlock list"                        hold
 ok dnf     "sudo dnf versionlock delete foo"             unhold foo
 ok yum     "sudo yum versionlock add foo"                hold foo
+ok yum     "yum versionlock list"                        hold
+ok yum     "sudo yum versionlock delete foo"             unhold foo
 ok zypper  "sudo zypper addlock foo"                     hold foo
 ok zypper  "zypper locks"                                hold
 ok zypper  "sudo zypper removelock foo"                  unhold foo
@@ -637,13 +659,20 @@ ok pkg     "sudo pkg lock foo"                           hold foo
 ok pkg     "sudo pkg lock -y foo"                        hold -y foo
 ok pkg     "pkg lock -l"                                 hold
 ok pkg     "sudo pkg unlock foo"                         unhold foo
-no pacman  "IgnorePkg"                                   hold foo
-no pacman  "IgnorePkg"                                   unhold foo
-no apk     "world constraints"                           hold foo
-no emerge  "package.mask"                                hold foo
-no port    "cannot hold"                                 hold foo
-no pkg_add "cannot hold"                                 hold foo
-no pkgin   "cannot hold"                                 hold foo
+for args in "hold" "hold foo" "unhold foo"; do
+    # shellcheck disable=SC2086  # $args is intentionally split
+    no pacman  "IgnorePkg"                               $args
+    # shellcheck disable=SC2086
+    no apk     "world constraints"                       $args
+    # shellcheck disable=SC2086
+    no emerge  "package.mask"                            $args
+    # shellcheck disable=SC2086
+    no port    "cannot hold"                             $args
+    # shellcheck disable=SC2086
+    no pkg_add "cannot hold"                             $args
+    # shellcheck disable=SC2086
+    no pkgin   "cannot hold"                             $args
+done
 err unhold
 
 # --- repo list / repo add ------------------------------------------------------
@@ -654,7 +683,12 @@ ok apt     "sudo add-apt-repository ppa:a/b"             repo add ppa:a/b
 ok apt     "sudo add-apt-repository -y ppa:a/b"          repo add -y ppa:a/b
 no apt     "drop the name"                               repo add ppa:a/b name
 ok dnf     "dnf repolist"                                repo
-ok dnf     "sudo dnf config-manager --add-repo https://x/y.repo" repo add https://x/y.repo
+if dnf --version 2>/dev/null | grep -q '^dnf5'; then
+    echo "skip: dnf4 repo add assertion (dnf5 host)"
+else
+    ok dnf "sudo dnf config-manager --add-repo https://x/y.repo" repo add https://x/y.repo
+fi
+ok yum     "yum repolist"                                repo
 ok yum     "sudo yum-config-manager --add-repo https://x/y.repo" repo add https://x/y.repo
 ok pacman  "pacman-conf --repo-list"                     repo
 no pacman  "pacman.conf"                                 repo add https://x
@@ -672,13 +706,18 @@ ok xbps    "xbps-query -L"                               repo
 no xbps    "/etc/xbps.d"                                 repo add https://x
 ok emerge  "portageq get_repos /"                        repo
 ok emerge  "sudo eselect repository enable guru"         repo add guru
+# a second operand would enable a second repository, not name the first
+no emerge  "drop the name"                               repo add guru myname
 ok brew    "brew tap"                                    repo
 ok brew    "brew tap user/tap https://x/y"               repo add user/tap https://x/y
 no port    "sources.conf"                                repo
+no port    "sources.conf"                                repo add https://x
 ok pkg     "pkg -vv"                                     repo
 no pkg     "/usr/local/etc/pkg/repos"                    repo add https://x
 ok pkg_add "cat /etc/installurl"                         repo
+no pkg_add "/etc/installurl"                             repo add https://x
 no pkgin   "repositories.conf"                           repo
+no pkgin   "repositories.conf"                           repo add https://x
 err repo add
 err repo add a b c
 err repo list foo
@@ -689,15 +728,18 @@ err repo bogus
 # first term and keeps results matching the rest.
 ok apt     "apt-cache search foo bar"                    search foo bar
 ok pacman  "pacman -Ss foo bar"                          search foo bar
-ok apk     "apk search foo | grep -i -e bar | grep -i -e baz" search foo bar baz
-ok dnf     "dnf search foo | grep -i -e bar"             search foo bar
-ok zypper  "zypper search foo | grep -i -e bar"          search foo bar
-ok brew    "brew search foo | grep -i -e bar"            search foo bar
-ok port    "port search foo | awk -v RS= -v ORS='\\n\\n' -v t=bar 'tolower(\$0) ~ tolower(t)'" search foo bar
-ok emerge  "emerge --search foo | awk -v RS= -v ORS='\\n\\n' -v t=bar 'tolower(\$0) ~ tolower(t)'" search foo bar
-ok apk     "apk search foo | grep -i -e 'a b'"           search foo "a b"
-ok apk     "apk search -- -foo | grep -i -e -bar"        search -- -foo -bar
+ok apk     "apk search foo | grep -i -F -e bar | grep -i -F -e baz" search foo bar baz
+ok dnf     "dnf search foo | grep -i -F -e bar"             search foo bar
+ok zypper  "zypper search foo | grep -i -F -e bar"          search foo bar
+ok brew    "brew search foo | grep -i -F -e bar"            search foo bar
+ok port    "port search foo | t=bar awk -v RS= -v ORS='\\n\\n' 'index(tolower(\$0), tolower(ENVIRON[\"t\"]))'" search foo bar
+ok emerge  "emerge --search foo | t=bar awk -v RS= -v ORS='\\n\\n' 'index(tolower(\$0), tolower(ENVIRON[\"t\"]))'" search foo bar
+ok apk     "apk search foo | grep -i -F -e 'a b'"           search foo "a b"
+ok apk     "apk search -- -foo | grep -i -F -e -bar"        search -- -foo -bar
 ok apk     "apk search foo"                              search foo
+# extra terms are plain text: regex characters match themselves
+ok apk     "apk search lib | grep -i -F -e c++"          search lib "c++"
+ok port    "port search lib | t=c++ awk -v RS= -v ORS='\\n\\n' 'index(tolower(\$0), tolower(ENVIRON[\"t\"]))'" search lib "c++"
 
 # --- remove keeps edited config files everywhere; Arch included -------------
 ok pacman  "sudo pacman -Rs --noconfirm foo"             remove -y foo
@@ -712,7 +754,7 @@ for pair in install:i install:in install:add remove:r remove:rm \
             hold:pin hold:lock unhold:unpin unhold:unlock repo:repos; do
     v=${pair%%:*}; al=${pair#*:}
     case $v in
-        install|remove|search|info|files|deps|rdeps|hold|unhold) args=foo ;;
+        install|remove|search|info|files|deps|rdeps|hold|unhold|list) args=foo ;;
         owns) args=/bin/ls ;;
         *) args="" ;;
     esac
@@ -790,6 +832,9 @@ esac
 # shellcheck disable=SC2086
 PKX_OS_RELEASE=/nonexistent PATH=$N $PKX_SH "$PKX" list "" >/dev/null 2>&1; rc=$?
 if [ "$rc" -eq 2 ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL usage-before-detection rc=$rc"; fi
+# shellcheck disable=SC2086
+PKX_OS_RELEASE=/nonexistent PATH=$N $PKX_SH "$PKX" which help >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 2 ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL which help without a manager rc=$rc"; fi
 # ...and a valid request with nothing detected is exit 1
 # shellcheck disable=SC2086
 PKX_OS_RELEASE=/nonexistent PATH=$N $PKX_SH "$PKX" list >/dev/null 2>&1; rc=$?
@@ -971,15 +1016,66 @@ printf '#!/bin/sh\necho "stub: $*"\n' > "$T/apk"; chmod +x "$T/apk"
 # shellcheck disable=SC2086
 got=$(PATH="$T:$PATH" PKX_MANAGER=apk PKX_SUDO='' $PKX_SH "$PKX" -q install foo </dev/null 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && [ "$got" = "stub: add foo" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL apk without -y — rc=$rc got: $got"; fi
+# (stubbed, so a host without apt-mark cannot pass this by failing early)
+printf '#!/bin/sh\necho "stub: $*"\n' > "$T/apt-mark"; chmod +x "$T/apt-mark"
 # shellcheck disable=SC2086
 got=$(PATH="$T:$PATH" PKX_MANAGER=apt PKX_SUDO='' $PKX_SH "$PKX" -q hold </dev/null 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && [ "$got" = "stub: showhold" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL read-only command without a terminal — rc=$rc got: $got"; fi
+
+# A command "may ask" exactly when it takes an assume-yes flag: xbps-remove
+# -O (clean) has none and runs without -y; xbps-install does not; OpenBSD's
+# pkg_add asks only on a terminal, so it is never refused.
+for b in xbps-install xbps-remove xbps-query pkg_add pkg_delete; do
+    # shellcheck disable=SC2016  # the stub expands these when it runs
+    printf '#!/bin/sh\necho "stub: $0 $*"\n' > "$T/$b"; chmod +x "$T/$b"
+done
+# noprompt <expected rc> <mgr> <pkx args...>
+noprompt() {
+    want=$1; mgr=$2; shift 2
+    # shellcheck disable=SC2086
+    got=$(PATH="$T:$PATH" PKX_MANAGER=$mgr PKX_SUDO='' $PKX_SH "$PKX" -q "$@" </dev/null 2>&1); rc=$?
+    if [ "$rc" -eq "$want" ]; then
+        pass=$((pass + 1))
+    else
+        fail=$((fail + 1)); echo "FAIL no-tty [$mgr] pkx $* — expected rc $want, got $rc: $got"
+    fi
+}
+noprompt 0 xbps    clean
+noprompt 0 xbps    search foo stub  # read-only, even with a filtered search
+noprompt 2 xbps    install foo
+noprompt 2 xbps    autoremove
+noprompt 0 pkg_add install foo
+noprompt 0 pkg_add autoremove
+
+# a helper that is a module, not a binary: eselect's 'repository' module
+printf '#!/bin/sh\nexit 0\n' > "$T/emerge"; chmod +x "$T/emerge"
+# shellcheck disable=SC2016  # the stub expands these when it runs
+printf '#!/bin/sh\n[ "$1 $2" = "modules list" ] && exit 0\necho "stub: eselect $*"\n' > "$T/eselect"; chmod +x "$T/eselect"
+# shellcheck disable=SC2086
+got=$(PATH="$T:$PATH" PKX_MANAGER=emerge PKX_SUDO='' $PKX_SH "$PKX" repo add guru </dev/null 2>&1); rc=$?
 case "$got" in
-    *"not a terminal"*) fail=$((fail + 1)); echo "FAIL read-only command refused without a terminal: $got" ;;
-    *) pass=$((pass + 1)) ;;
+    *"needs the eselect 'repository' module (from eselect-repository)"*)
+        case "$got" in
+            *"stub:"*|*"running:"*) fail=$((fail + 1)); echo "FAIL eselect module check — ran anyway: $got" ;;
+            *) if [ "$rc" -eq 1 ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL eselect module check rc=$rc"; fi ;;
+        esac ;;
+    *) fail=$((fail + 1)); echo "FAIL eselect module check — got (rc=$rc): $got" ;;
 esac
+# shellcheck disable=SC2016
+printf '#!/bin/sh\nif [ "$1 $2" = "modules list" ]; then printf "Extra modules:\\n  repository   Manage repos.conf\\n"; exit 0; fi\necho "stub: eselect $*"\n' > "$T/eselect"
+# shellcheck disable=SC2086
+got=$(PATH="$T:$PATH" PKX_MANAGER=emerge PKX_SUDO='' $PKX_SH "$PKX" -q repo add guru </dev/null 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && [ "$got" = "stub: eselect repository enable guru" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL eselect module present — rc=$rc got: $got"; fi
 
 # --- dnf5 changed deps and repo add ---------------------------------------------
+# pkx asks 'dnf --version' which dnf it is; a dnf5 binary next to dnf4
+# (possible on Fedora 39/40) must not switch the syntax
 printf '#!/bin/sh\nexit 0\n' > "$T/dnf5"; chmod +x "$T/dnf5"
+printf '#!/bin/sh\necho 4.14.0\n' > "$T/dnf"; chmod +x "$T/dnf"
+# shellcheck disable=SC2086
+got=$(PATH="$T:$PATH" PKX_MANAGER=dnf PKX_SUDO=sudo $PKX_SH "$PKX" -n deps foo 2>&1)
+if [ "$got" = "dnf repoquery --requires --resolve foo" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL dnf4 with a dnf5 binary present — got: $got"; fi
+printf '#!/bin/sh\necho "dnf5 version 5.4.1.0"\n' > "$T/dnf"; chmod +x "$T/dnf"
 # shellcheck disable=SC2086
 got=$(PATH="$T:$PATH" PKX_MANAGER=dnf PKX_SUDO=sudo $PKX_SH "$PKX" -n deps foo 2>&1)
 if [ "$got" = "dnf repoquery --providers-of=requires foo" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL dnf5 deps — got: $got"; fi
@@ -1025,13 +1121,17 @@ if command -v bash >/dev/null 2>&1; then
 eval "$($PKX_SH "$PKX" completion bash)"
 t() { COMP_WORDS=("$@"); COMP_CWORD=$((${#COMP_WORDS[@]} - 1)); COMPREPLY=(); _pkx; echo "${COMPREPLY[*]}"; }
 t pkx or; t pkx --via pk; t pkx -y repo ""; t pkx help unh
+# bash splits '--via=apt' at the '=' (COMP_WORDBREAKS)
+t pkx --via = apt ins; t pkx --via = pa
 BASHEOF
     got=$(PKX_SH="$PKX_SH" PKX="$PKX" bash "$C" 2>&1)
     rm -f "$C"
     want="orphans
 pkg pkg_add pkgin
 list add
-unhold"
+unhold
+install
+pacman"
     if [ "$got" = "$want" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL bash completion — got: $got"; fi
 fi
 # the help text shows the command literally (it is in an unquoted heredoc)

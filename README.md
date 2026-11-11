@@ -61,21 +61,36 @@ You need:
 
 ### Install pkx
 
-1. Download pkx into `/usr/local/bin` and make it executable:
+1. Download pkx 0.5.0 into `/usr/local/bin`:
 
    ```sh
-   sudo curl -fsSL https://raw.githubusercontent.com/ethanpil/pkx/main/pkx -o /usr/local/bin/pkx
-   sudo chmod +x /usr/local/bin/pkx
+   sudo curl -fsSL https://raw.githubusercontent.com/ethanpil/pkx/v0.5.0/pkx -o /usr/local/bin/pkx
    ```
 
    With `wget` instead of `curl`:
 
    ```sh
-   sudo wget -qO /usr/local/bin/pkx https://raw.githubusercontent.com/ethanpil/pkx/main/pkx
+   sudo wget -qO /usr/local/bin/pkx https://raw.githubusercontent.com/ethanpil/pkx/v0.5.0/pkx
+   ```
+
+2. Check that the download is complete and unchanged. The command prints
+   `OK` if it is:
+
+   ```sh
+   echo "925dc400a8cd6d6f1a8686a73d07155427cb86ba8be7192ecf26597a0f7ab4db  /usr/local/bin/pkx" | sha256sum -c -
+   ```
+
+   On macOS, use `shasum -a 256 -c -` instead of `sha256sum -c -`. On
+   OpenBSD, run `sha256 /usr/local/bin/pkx` and compare the result with
+   the checksum above.
+
+3. Make it executable:
+
+   ```sh
    sudo chmod +x /usr/local/bin/pkx
    ```
 
-2. Check that it works:
+4. Check that it works:
 
    ```sh
    pkx which
@@ -87,18 +102,19 @@ You need:
 To install without administrator rights, put the file in a folder on your
 `PATH` that you own, such as `~/.local/bin`, and leave out `sudo`.
 
-### Install a specific release
+### Install a different version
 
-Replace `main` in the download address with a release tag, such as `v0.4.0`.
-Each release's SHA-256 checksum is listed in [CHANGELOG.md](CHANGELOG.md).
+Replace `v0.5.0` in the download address with another release tag, such as
+`v0.4.0`. Each release's SHA-256 checksum is listed in
+[CHANGELOG.md](CHANGELOG.md). Use `main` instead of a tag to get the latest
+development version, which has no published checksum.
 
-This README describes the current version on `main`. Release 0.4.0 does not
-have `purge`, the read-only `orphans`, `deps`, `rdeps`, `hold`, `unhold`,
-`repo` or `completion`.
+This README describes version 0.5.0.
 
 ### Update or remove pkx
 
-- **Update:** run the download command again.
+- **Update:** repeat the install steps with the new version's tag and
+  checksum.
 - **Remove:** delete the file: `sudo rm /usr/local/bin/pkx`
 
 ### Turn on tab completion (optional)
@@ -263,7 +279,8 @@ pkx orphans
 `pkx search <term>...`
 
 Searches the repositories. With more than one term, every result matches
-all of the terms.
+all of the terms. pkx compares the extra terms as plain text and ignores
+upper and lower case.
 
 ```sh
 pkx search htop
@@ -303,7 +320,8 @@ pkx list git curl
   pkx -q list git || pkx -y install git
   ```
 
-- Other names for this command: `l`, `ls`, `installed`, `-l`
+- Other names for this command: `l`, `ls`, `installed`, `-l`. When you
+  use `installed`, you must give at least one package name.
 
 #### owns
 
