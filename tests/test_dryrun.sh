@@ -121,7 +121,7 @@ ok yum "rpm -ql foo"                                             files foo
 # --- pacman ----------------------------------------------------------------
 ok pacman "sudo pacman -S --needed foo"                                   install foo
 ok pacman "sudo pacman -S --needed --noconfirm foo"                       install -y foo
-ok pacman "sudo pacman -Rns foo"                                 remove foo
+ok pacman "sudo pacman -Rs foo"                                  remove foo
 ok pacman "pacman -Ss foo"                                       search foo
 ok pacman "pacman -Si foo"                                       info foo
 no pacman "partial upgrade" refresh
@@ -363,16 +363,16 @@ ok dnf     "rpm -q foo"                                  installed foo
 ok dnf     "rpm -qa"                                     installed
 
 # --- single-argument tools run once per operand ------------------------------
-ok xbps    "xbps-query -Rs foo; xbps-query -Rs bar"      search foo bar
+ok xbps    "xbps-query -Rs foo | grep -i -e bar"         search foo bar
 ok xbps    "xbps-query -RS foo && xbps-query -RS bar"    info foo bar
 ok xbps    "xbps-query -f foo && xbps-query -f bar"      files foo bar
 ok xbps    "xbps-query -o /a && xbps-query -o /b"        owns /a /b
-ok pkg     "pkg search foo; pkg search bar"              search foo bar
+ok pkg     "pkg search foo | grep -i -e bar"             search foo bar
 ok pkg     "pkg search -e -f foo && pkg search -e -f bar" info foo bar
 ok pkg     "pkg which /a && pkg which /b"                owns /a /b
-ok pkg_add "pkg_info -Q foo; pkg_info -Q bar"            search foo bar
+ok pkg_add "pkg_info -Q foo | grep -i -e bar"           search foo bar
 ok pkg_add "pkg_info -E /a && pkg_info -E /b"            owns /a /b
-ok pkgin   "pkgin search foo; pkgin search bar"          search foo bar
+ok pkgin   "pkgin search foo | grep -i -e bar"           search foo bar
 ok pkgin   "pkgin pkg-descr foo && pkgin pkg-descr bar"  info foo bar
 ok pkgin   "pkgin pkg-content foo && pkgin pkg-content bar" files foo bar
 ok xbps    "xbps-query -RS -- -foo"                      info -- -foo
@@ -551,16 +551,160 @@ case "$got" in
     *) fail=$((fail + 1)); echo "FAIL version — got: $got" ;;
 esac
 
+# --- purge (remove + config files) and what remove does ---------------------
+ok apt     "sudo apt-get purge foo"                      purge foo
+ok apt     "sudo apt-get purge -y foo"                   purge -y foo
+ok pacman  "sudo pacman -Rns foo"                        purge foo
+ok pkg_add "sudo pkg_delete -c foo"                      purge foo
+ok pkg_add "sudo pkg_delete -I -c foo"                   purge -y foo
+no dnf     ".rpmsave"                                    purge foo
+no yum     ".rpmsave"                                    purge foo
+no zypper  ".rpmsave"                                    purge foo
+no apk     "no purge"                                    purge foo
+no xbps    "config files you edited"                     purge foo
+no emerge  "CONFIG_PROTECT"                              purge foo
+no brew    "zap"                                         purge foo
+no port    "no purge"                                    purge foo
+no pkg     "config files you edited"                     purge foo
+no pkgin   "config files you edited"                     purge foo
+err purge
+
+# --- orphans (list only, never removes, never sudo) ---------------------------
+ok apt     "apt-get --simulate autoremove"               orphans
+ok dnf     "dnf repoquery --unneeded"                    orphans
+no yum     "pkx autoremove"                              orphans
+ok pacman  "pacman -Qdt"                                 orphans
+no apk     "never any"                                   orphans
+ok zypper  "zypper packages --unneeded"                  orphans
+ok xbps    "xbps-remove -on"                             orphans
+ok emerge  "emerge --pretend --depclean"                 orphans
+ok brew    "brew autoremove --dry-run"                   orphans
+ok port    "port echo leaves"                            orphans
+ok pkg     "pkg autoremove --dry-run"                    orphans
+ok pkg_add "pkg_delete -an"                              orphans
+ok pkgin   "pkgin -n autoremove"                         orphans
+err orphans foo
+
+# --- deps / rdeps ------------------------------------------------------------
+ok apt     "apt-cache depends foo"                       deps foo
+ok apt     "apt-cache rdepends --installed foo"          rdeps foo
+ok dnf     "dnf repoquery --installed --whatrequires foo" rdeps foo
+ok yum     "yum deplist foo"                             deps foo
+ok yum     "repoquery --installed --whatrequires foo"    rdeps foo
+ok pacman  "pactree -s -d1 -u foo && pactree -s -d1 -u bar" deps foo bar
+ok pacman  "pactree -r -d1 -u foo"                       rdeps foo
+ok apk     "apk info -R foo"                             deps foo
+ok apk     "apk info -r foo"                             rdeps foo
+ok zypper  "zypper info --requires foo"                  deps foo
+ok zypper  "zypper search --installed-only --requires-pkg foo" rdeps foo
+ok xbps    "xbps-query -Rx foo && xbps-query -Rx bar"    deps foo bar
+ok xbps    "xbps-query -X foo"                           rdeps foo
+ok emerge  "equery depgraph --depth=1 foo"               deps foo
+ok emerge  "equery depends foo"                          rdeps foo
+ok brew    "brew deps foo"                               deps foo
+ok brew    "brew uses --installed foo"                   rdeps foo
+ok port    "port deps foo"                               deps foo
+ok port    "port dependents foo"                         rdeps foo
+ok pkg     "pkg rquery '%dn-%dv' foo"                    deps foo
+ok pkg     "pkg info -r foo"                             rdeps foo
+ok pkg_add "pkg_info -f foo | grep '^@depend'"           deps foo
+ok pkg_add "pkg_info -R foo"                             rdeps foo
+ok pkgin   "pkgin show-deps foo"                         deps foo
+ok pkgin   "pkgin show-rev-deps foo"                     rdeps foo
+err deps
+err rdeps
+
+# --- hold / unhold (hold with no operands lists, without sudo) ---------------
+ok apt     "sudo apt-mark hold foo"                      hold foo
+ok apt     "apt-mark showhold"                           hold
+ok apt     "sudo apt-mark unhold foo"                    unhold foo
+ok dnf     "sudo dnf versionlock add foo"                hold foo
+ok dnf     "dnf versionlock list"                        hold
+ok dnf     "sudo dnf versionlock delete foo"             unhold foo
+ok yum     "sudo yum versionlock add foo"                hold foo
+ok zypper  "sudo zypper addlock foo"                     hold foo
+ok zypper  "zypper locks"                                hold
+ok zypper  "sudo zypper removelock foo"                  unhold foo
+ok xbps    "sudo xbps-pkgdb -m hold foo"                 hold foo
+ok xbps    "xbps-query -H"                               hold
+ok xbps    "sudo xbps-pkgdb -m unhold foo"               unhold foo
+ok brew    "brew pin foo"                                hold foo
+ok brew    "brew list --pinned"                          hold
+ok brew    "brew unpin foo"                              unhold foo
+ok pkg     "sudo pkg lock foo"                           hold foo
+ok pkg     "sudo pkg lock -y foo"                        hold -y foo
+ok pkg     "pkg lock -l"                                 hold
+ok pkg     "sudo pkg unlock foo"                         unhold foo
+no pacman  "IgnorePkg"                                   hold foo
+no pacman  "IgnorePkg"                                   unhold foo
+no apk     "world constraints"                           hold foo
+no emerge  "package.mask"                                hold foo
+no port    "cannot hold"                                 hold foo
+no pkg_add "cannot hold"                                 hold foo
+no pkgin   "cannot hold"                                 hold foo
+err unhold
+
+# --- repo list / repo add ------------------------------------------------------
+ok apt     "apt-cache policy"                            repo
+ok apt     "apt-cache policy"                            repo list
+ok apt     "apt-cache policy"                            repos
+ok apt     "sudo add-apt-repository ppa:a/b"             repo add ppa:a/b
+ok apt     "sudo add-apt-repository -y ppa:a/b"          repo add -y ppa:a/b
+no apt     "drop the name"                               repo add ppa:a/b name
+ok dnf     "dnf repolist"                                repo
+ok dnf     "sudo dnf config-manager --add-repo https://x/y.repo" repo add https://x/y.repo
+ok yum     "sudo yum-config-manager --add-repo https://x/y.repo" repo add https://x/y.repo
+ok pacman  "pacman-conf --repo-list"                     repo
+no pacman  "pacman.conf"                                 repo add https://x
+ok apk     "cat /etc/apk/repositories"                   repo
+ok apk     "printf '%s\\n' https://x/main | sudo tee -a /etc/apk/repositories" repo add https://x/main
+ok zypper  "zypper repos"                                repo
+ok zypper  "sudo zypper addrepo https://x/r myrepo"      repo add https://x/r myrepo
+ok xbps    "xbps-query -L"                               repo
+no xbps    "/etc/xbps.d"                                 repo add https://x
+ok emerge  "portageq get_repos /"                        repo
+ok emerge  "sudo eselect repository enable guru"         repo add guru
+ok brew    "brew tap"                                    repo
+ok brew    "brew tap user/tap https://x/y"               repo add user/tap https://x/y
+no port    "sources.conf"                                repo
+ok pkg     "pkg -vv"                                     repo
+no pkg     "/usr/local/etc/pkg/repos"                    repo add https://x
+ok pkg_add "cat /etc/installurl"                         repo
+no pkgin   "repositories.conf"                           repo
+err repo add
+err repo add a b c
+err repo list foo
+err repo bogus
+
+# --- search: several terms always mean "all of them" -------------------------
+# apt-cache and pacman already AND their terms; elsewhere pkx searches the
+# first term and keeps results matching the rest.
+ok apt     "apt-cache search foo bar"                    search foo bar
+ok pacman  "pacman -Ss foo bar"                          search foo bar
+ok apk     "apk search foo | grep -i -e bar | grep -i -e baz" search foo bar baz
+ok dnf     "dnf search foo | grep -i -e bar"             search foo bar
+ok zypper  "zypper search foo | grep -i -e bar"          search foo bar
+ok brew    "brew search foo | grep -i -e bar"            search foo bar
+ok port    "port search foo | awk -v RS= -v ORS='\\n\\n' -v t=bar 'tolower(\$0) ~ tolower(t)'" search foo bar
+ok emerge  "emerge --search foo | awk -v RS= -v ORS='\\n\\n' -v t=bar 'tolower(\$0) ~ tolower(t)'" search foo bar
+ok apk     "apk search foo | grep -i -e 'a b'"           search foo "a b"
+ok apk     "apk search -- -foo | grep -i -e -bar"        search -- -foo -bar
+ok apk     "apk search foo"                              search foo
+
+# --- remove keeps edited config files everywhere; Arch included -------------
+ok pacman  "sudo pacman -Rs --noconfirm foo"             remove -y foo
+
 # --- aliases: every accepted spelling maps to its command --------------------
 # (word aliases, then the one-letter ones, which also work as flags)
 for pair in install:i install:in install:add remove:r remove:rm \
             remove:uninstall remove:del search:s search:se search:find \
             info:show list:l list:ls list:installed outdated:updates \
-            upgrade:u upgrade:up autoremove:orphans clean:cleanup \
-            owns:owner files:contents; do
+            upgrade:u upgrade:up orphans:unneeded clean:cleanup \
+            owns:owner files:contents deps:depends rdeps:rdepends \
+            hold:pin hold:lock unhold:unpin unhold:unlock repo:repos; do
     v=${pair%%:*}; al=${pair#*:}
     case $v in
-        install|remove|search|info|files) args=foo ;;
+        install|remove|search|info|files|deps|rdeps|hold|unhold) args=foo ;;
         owns) args=/bin/ls ;;
         *) args="" ;;
     esac
@@ -631,7 +775,7 @@ esac
 # shellcheck disable=SC2086
 got=$($PKX_SH "$PKX" help 2>&1)
 case "$got" in
-    *"Aliases:"*"install     i in add"*"autoremove  orphans"*) pass=$((pass + 1)) ;;
+    *"Aliases:"*"install     i in add"*"orphans     unneeded"*) pass=$((pass + 1)) ;;
     *) fail=$((fail + 1)); echo "FAIL help — alias table: $got" ;;
 esac
 # usage errors win over a missing manager (exit 2, not 1)
@@ -730,8 +874,8 @@ chmod +x "$T/apt-get" "$T/emerge"
 
 # native exit code passes through untouched (stub exits 7)
 # shellcheck disable=SC2086
-got=$(PATH="$T:$PATH" PKX_MANAGER=apt PKX_SUDO='' $PKX_SH "$PKX" -q install foo </dev/null 2>/dev/null); rc=$?
-if [ "$rc" -eq 7 ] && [ "$got" = "stub: install foo" ]; then
+got=$(PATH="$T:$PATH" PKX_MANAGER=apt PKX_SUDO='' $PKX_SH "$PKX" -yq install foo </dev/null 2>/dev/null); rc=$?
+if [ "$rc" -eq 7 ] && [ "$got" = "stub: install -y foo" ]; then
     pass=$((pass + 1))
 else
     fail=$((fail + 1)); echo "FAIL runtime exit passthrough — rc=$rc got: $got"
@@ -739,13 +883,13 @@ fi
 
 # teaching line goes to stderr and names the command; -q suppresses it
 # shellcheck disable=SC2086
-teach=$(PATH="$T:$PATH" PKX_MANAGER=apt PKX_SUDO='' $PKX_SH "$PKX" install foo </dev/null 2>&1 >/dev/null)
+teach=$(PATH="$T:$PATH" PKX_MANAGER=apt PKX_SUDO='' $PKX_SH "$PKX" -y install foo </dev/null 2>&1 >/dev/null)
 case "$teach" in
-    *"pkx: running: apt-get install foo"*) pass=$((pass + 1)) ;;
+    *"pkx: running: apt-get install -y foo"*) pass=$((pass + 1)) ;;
     *) fail=$((fail + 1)); echo "FAIL runtime teaching line — got: $teach" ;;
 esac
 # shellcheck disable=SC2086
-quiet=$(PATH="$T:$PATH" PKX_MANAGER=apt PKX_SUDO='' $PKX_SH "$PKX" -q install foo </dev/null 2>&1 >/dev/null)
+quiet=$(PATH="$T:$PATH" PKX_MANAGER=apt PKX_SUDO='' $PKX_SH "$PKX" -yq install foo </dev/null 2>&1 >/dev/null)
 case "$quiet" in
     *"pkx: running:"*) fail=$((fail + 1)); echo "FAIL runtime -q — teaching line not suppressed: $quiet" ;;
     *) pass=$((pass + 1)) ;;
@@ -753,15 +897,15 @@ esac
 
 # PKX_QUIET=1 silences; PKX_QUIET=0 does not
 # shellcheck disable=SC2086
-quiet=$(PATH="$T:$PATH" PKX_QUIET=1 PKX_MANAGER=apt PKX_SUDO='' $PKX_SH "$PKX" install foo </dev/null 2>&1 >/dev/null)
+quiet=$(PATH="$T:$PATH" PKX_QUIET=1 PKX_MANAGER=apt PKX_SUDO='' $PKX_SH "$PKX" -y install foo </dev/null 2>&1 >/dev/null)
 case "$quiet" in
     *"pkx: running:"*) fail=$((fail + 1)); echo "FAIL runtime PKX_QUIET=1 — not suppressed: $quiet" ;;
     *) pass=$((pass + 1)) ;;
 esac
 # shellcheck disable=SC2086
-teach=$(PATH="$T:$PATH" PKX_QUIET=0 PKX_MANAGER=apt PKX_SUDO='' $PKX_SH "$PKX" install foo </dev/null 2>&1 >/dev/null)
+teach=$(PATH="$T:$PATH" PKX_QUIET=0 PKX_MANAGER=apt PKX_SUDO='' $PKX_SH "$PKX" -y install foo </dev/null 2>&1 >/dev/null)
 case "$teach" in
-    *"pkx: running: apt-get install foo"*) pass=$((pass + 1)) ;;
+    *"pkx: running: apt-get install -y foo"*) pass=$((pass + 1)) ;;
     *) fail=$((fail + 1)); echo "FAIL runtime PKX_QUIET=0 — teaching line missing: $teach" ;;
 esac
 
@@ -774,7 +918,125 @@ case "$got" in
     *) fail=$((fail + 1)); echo "FAIL runtime REQ guard — got (rc=$rc): $got" ;;
 esac
 
+# --- outdated: 0 = up to date, 100 = upgrades available, else the error -----
+# Stubs print $STUB_OUT (a file) and exit $STUB_RC.
+for b in apt pacman dnf; do
+    # shellcheck disable=SC2016  # the stub expands these when it runs
+    printf '#!/bin/sh\n[ -n "$STUB_OUT" ] && cat "$STUB_OUT"\nexit "${STUB_RC:-0}"\n' > "$T/$b"
+    chmod +x "$T/$b"
+done
+# outdated_rc <expected rc> <mgr> <stub rc> <stub output...>
+outdated_rc() {
+    want=$1; mgr=$2; src=$3; shift 3
+    printf '%s\n' "$@" > "$T/out"
+    [ $# -gt 0 ] || : > "$T/out"
+    # shellcheck disable=SC2086
+    got=$(PATH="$T:$PATH" STUB_OUT="$T/out" STUB_RC=$src PKX_MANAGER=$mgr PKX_SUDO='' \
+          $PKX_SH "$PKX" -q outdated </dev/null 2>/dev/null); rc=$?
+    if [ "$rc" -eq "$want" ] && [ "$got" = "$(cat "$T/out")" ]; then
+        pass=$((pass + 1))
+    else
+        fail=$((fail + 1)); echo "FAIL outdated [$mgr stub rc=$src] — expected $want, got rc=$rc out: $got"
+    fi
+}
+outdated_rc 100 apt    0 "Listing..." "foo/stable 2.0 amd64 [upgradable from: 1.0]"
+outdated_rc 0   apt    0 "Listing..."
+outdated_rc 5   apt    5 "Listing..."
+outdated_rc 100 pacman 0 "foo 1.0 -> 2.0"
+outdated_rc 0   pacman 1
+outdated_rc 100 dnf    100 "foo.x86_64  2.0  updates"
+outdated_rc 0   dnf    0
+
+# --- without a terminal, commands that can prompt need -y ---------------------
+# shellcheck disable=SC2086
+got=$(PATH="$T:$PATH" PKX_MANAGER=apt PKX_SUDO='' $PKX_SH "$PKX" install foo </dev/null 2>&1); rc=$?
+case "$got" in
+    *"stdin is not a terminal"*"-y"*)
+        case "$got" in
+            *"stub:"*) fail=$((fail + 1)); echo "FAIL no-tty refusal — the native tool ran: $got" ;;
+            *) if [ "$rc" -eq 2 ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL no-tty refusal rc=$rc"; fi ;;
+        esac ;;
+    *) fail=$((fail + 1)); echo "FAIL no-tty refusal — got (rc=$rc): $got" ;;
+esac
+# read-only commands, and managers that never prompt, are unaffected
+printf '#!/bin/sh\necho "stub: $*"\n' > "$T/apk"; chmod +x "$T/apk"
+# shellcheck disable=SC2086
+got=$(PATH="$T:$PATH" PKX_MANAGER=apk PKX_SUDO='' $PKX_SH "$PKX" -q install foo </dev/null 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && [ "$got" = "stub: add foo" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL apk without -y — rc=$rc got: $got"; fi
+# shellcheck disable=SC2086
+got=$(PATH="$T:$PATH" PKX_MANAGER=apt PKX_SUDO='' $PKX_SH "$PKX" -q hold </dev/null 2>&1); rc=$?
+case "$got" in
+    *"not a terminal"*) fail=$((fail + 1)); echo "FAIL read-only command refused without a terminal: $got" ;;
+    *) pass=$((pass + 1)) ;;
+esac
+
+# --- dnf5 changed deps and repo add ---------------------------------------------
+printf '#!/bin/sh\nexit 0\n' > "$T/dnf5"; chmod +x "$T/dnf5"
+# shellcheck disable=SC2086
+got=$(PATH="$T:$PATH" PKX_MANAGER=dnf PKX_SUDO=sudo $PKX_SH "$PKX" -n deps foo 2>&1)
+if [ "$got" = "dnf repoquery --providers-of=requires foo" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL dnf5 deps — got: $got"; fi
+# shellcheck disable=SC2086
+got=$(PATH="$T:$PATH" PKX_MANAGER=dnf PKX_SUDO=sudo $PKX_SH "$PKX" -n repo add https://x/y.repo 2>&1)
+if [ "$got" = "sudo dnf config-manager addrepo --from-repofile=https://x/y.repo" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL dnf5 repo add — got: $got"; fi
+
+# missing helper tools name the package that provides them
+printf '#!/bin/sh\nexit 0\n' > "$T/pacman"; chmod +x "$T/pacman"
+# shellcheck disable=SC2086
+got=$(PATH="$T:$PATH" PKX_MANAGER=pacman PKX_SUDO='' $PKX_SH "$PKX" deps foo </dev/null 2>&1); rc=$?
+case "$got" in
+    *"needs 'pactree' (from pacman-contrib)"*)
+        if [ "$rc" -eq 1 ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL pactree hint rc=$rc"; fi ;;
+    *) fail=$((fail + 1)); echo "FAIL pactree hint — got (rc=$rc): $got" ;;
+esac
+
 rm -rf "$T"
+
+# --- shell completion -----------------------------------------------------------
+# Generated from the command table; each script must at least parse in its
+# own shell (skipped when that shell is not installed).
+for sh_ in bash zsh fish; do
+    # shellcheck disable=SC2086
+    out=$($PKX_SH "$PKX" completion "$sh_" 2>&1); rc=$?
+    case "$out" in
+        *"install"*"autoremove"*"orphans"*"repo"*"completion"*)
+            if [ "$rc" -eq 0 ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL completion $sh_ rc=$rc"; fi ;;
+        *) fail=$((fail + 1)); echo "FAIL completion $sh_ — commands missing: $out" ;;
+    esac
+    if command -v "$sh_" >/dev/null 2>&1; then
+        if printf '%s\n' "$out" | "$sh_" -n 2>/dev/null; then
+            pass=$((pass + 1))
+        else
+            fail=$((fail + 1)); echo "FAIL completion $sh_ — does not parse"
+        fi
+    fi
+done
+if command -v bash >/dev/null 2>&1; then
+    C=$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/pkxcomp.$$")
+    # a bash script (not run by this POSIX harness itself)
+    cat > "$C" <<'BASHEOF'
+eval "$($PKX_SH "$PKX" completion bash)"
+t() { COMP_WORDS=("$@"); COMP_CWORD=$((${#COMP_WORDS[@]} - 1)); COMPREPLY=(); _pkx; echo "${COMPREPLY[*]}"; }
+t pkx or; t pkx --via pk; t pkx -y repo ""; t pkx help unh
+BASHEOF
+    got=$(PKX_SH="$PKX_SH" PKX="$PKX" bash "$C" 2>&1)
+    rm -f "$C"
+    want="orphans
+pkg pkg_add pkgin
+list add
+unhold"
+    if [ "$got" = "$want" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL bash completion — got: $got"; fi
+fi
+# the help text shows the command literally (it is in an unquoted heredoc)
+# shellcheck disable=SC2086
+got=$($PKX_SH "$PKX" help 2>&1)
+# shellcheck disable=SC2016  # the literal text, deliberately unexpanded
+case "$got" in
+    *'eval "$(pkx completion bash)"'*) pass=$((pass + 1)) ;;
+    *) fail=$((fail + 1)); echo "FAIL help — completion hint was expanded: $got" ;;
+esac
+err completion
+err completion tcsh
+err completion bash zsh
 
 echo
 echo "pkx dry-run suite: $pass passed, $fail failed"

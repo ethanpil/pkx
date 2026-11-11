@@ -68,22 +68,47 @@ pkx which
 which prints the detected manager and exactly what every verb maps to on this
 system.
 
+### Shell completion
+
+pkx generates its own completion scripts (commands, aliases, flags, `--via`
+managers, `repo` subcommands, and file names where an operand is a file):
+
+```sh
+eval "$(pkx completion bash)"     # in ~/.bashrc
+eval "$(pkx completion zsh)"      # in ~/.zshrc, after compinit
+pkx completion fish | source      # in ~/.config/fish/config.fish
+```
+
+or save the output once, e.g. `pkx completion fish >
+~/.config/fish/completions/pkx.fish`, or `pkx completion zsh > _pkx` in a
+directory on your `$fpath`.
+
 ## Quick start
 
 ```sh
 pkx install htop tmux      # install packages
 pkx install ./foo.deb      # install a downloaded package file
-pkx remove htop            # uninstall
+pkx remove htop            # uninstall (keeps config files you edited)
+pkx purge htop             # uninstall and delete its config files
 pkx search terminal        # search the repos
+pkx search terminal emulator  # results must match every term
 pkx info tmux              # package details
 pkx upgrade                # refresh index + upgrade everything
 pkx upgrade htop           # upgrade just one package
-pkx outdated               # what has an upgrade available?
+pkx outdated               # what has an upgrade available? (exit 100 = some)
 pkx list                   # installed packages
 pkx list tmux              # is it installed? (exit 0 = yes)
 pkx owns /usr/bin/vim      # which package owns this file?
 pkx files tmux             # which files did this package install?
-pkx autoremove             # remove no-longer-needed dependencies
+pkx deps tmux              # what does it depend on?
+pkx rdeps libevent         # what installed packages depend on it?
+pkx orphans                # list no-longer-needed dependencies
+pkx autoremove             # ...and remove them
+pkx hold nginx             # keep nginx at its current version
+pkx hold                   # list held packages
+pkx unhold nginx           # let it upgrade again
+pkx repo                   # list repositories
+pkx repo add ppa:foo/bar   # add one (the source format is the manager's)
 pkx clean                  # clear the package manager caches
 pkx help search            # one command's help + what it runs here
 ```
@@ -103,10 +128,15 @@ probably does the right thing:
 | `list` | `l`, `-l`, `ls`, `installed` |
 | `outdated` | `updates` |
 | `upgrade` | `u`, `-u`, `up` |
-| `autoremove` | `orphans` |
+| `orphans` | `unneeded` |
 | `clean` | `cleanup` |
 | `owns` | `owner` |
 | `files` | `contents` |
+| `deps` | `depends` |
+| `rdeps` | `rdepends` |
+| `hold` | `pin`, `lock` |
+| `unhold` | `unpin`, `unlock` |
+| `repo` | `repos` |
 
 The one-letter aliases also work as flags and combine with the other short
 flags: `pkx -s htop`, `pkx htop -s`, `pkx -yi htop`. A command word *and* a
@@ -153,37 +183,55 @@ command for every one of these mappings.
 |---|---|---|---|---|---|---|
 | `install` | `apt-get install` | `dnf install` | `pacman -S --needed` | `apk add` | `zypper install` | `brew install` |
 | `install <file>`⁷ | `apt-get install ./f` | `dnf install ./f` | `pacman -U` | `apk add ./f` | `zypper install ./f` | *n/a*² |
-| `remove` | `apt-get remove` | `dnf remove` | `pacman -Rns` | `apk del` | `zypper remove` | `brew uninstall` |
-| `search` | `apt-cache search` | `dnf search` | `pacman -Ss` | `apk search` | `zypper search` | `brew search` |
+| `remove` | `apt-get remove` | `dnf remove` | `pacman -Rs` | `apk del` | `zypper remove` | `brew uninstall` |
+| `purge` | `apt-get purge` | *n/a*² | `pacman -Rns` | *n/a*² | *n/a*² | *n/a*² |
+| `search` | `apt-cache search` | `dnf search`¹¹ | `pacman -Ss` | `apk search`¹¹ | `zypper search`¹¹ | `brew search`¹¹ |
 | `info` | `apt-cache show` | `dnf info` | `pacman -Si` | `apk search -e -v` | `zypper info` | `brew info` |
 | `refresh` | `apt-get update` | `dnf makecache` | *refused*¹ | `apk update` | `zypper refresh` | `brew update` |
 | `upgrade` | `update; dist-upgrade` | `dnf upgrade --refresh` | `pacman -Syu` | `update && upgrade` | `refresh && update` | `update && upgrade` |
 | `upgrade <pkg>` | `update; install --only-upgrade` | `dnf upgrade --refresh` | *refused*⁴ | `update && upgrade` | `refresh && update`⁴ | `update && upgrade` |
-| `outdated` | `apt list --upgradable` | `dnf check-update`⁶ | `pacman -Qu`⁶ | `apk list -u` | `zypper list-updates` | `brew outdated` |
+| `outdated`⁶ | `apt list --upgradable` | `dnf check-update` | `pacman -Qu` | `apk list -u` | `zypper list-updates` | `brew outdated` |
 | `list` | `apt list --installed` | `rpm -qa` | `pacman -Q` | `apk list --installed` | `zypper search --installed-only` | `brew list --versions` |
 | `list <pkg>` | `dpkg-query -W … \| grep`⁸ | `rpm -q` | `pacman -Q` | `apk info -e` | `rpm -q` | `brew list --versions` |
 | `autoremove` | `apt-get autoremove` | `dnf autoremove` | `-Rns $(pacman -Qdtq)`³ | *n/a*² | *n/a*² | `brew autoremove` |
+| `orphans` | `apt-get --simulate autoremove` | `dnf repoquery --unneeded` | `pacman -Qdt` | *n/a*² | `zypper packages --unneeded` | `brew autoremove --dry-run` |
 | `clean` | `apt-get clean` | `dnf clean all` | `pacman -Sc` | `apk cache clean` | `zypper clean --all` | `brew cleanup` |
 | `owns` | `dpkg -S` | `rpm -qf` | `pacman -Qo` | `apk info --who-owns` | `rpm -qf` | *n/a*² |
 | `files` | `dpkg -L` | `rpm -ql` | `pacman -Ql` | `apk info -L` | `rpm -ql` | `brew list --verbose` |
+| `deps` | `apt-cache depends` | `dnf repoquery --requires --resolve`¹² | `pactree -s -d1 -u`⁹ | `apk info -R` | `zypper info --requires` | `brew deps` |
+| `rdeps` | `apt-cache rdepends --installed` | `dnf repoquery --installed --whatrequires` | `pactree -r -d1 -u`⁹ | `apk info -r` | `zypper search --installed-only --requires-pkg` | `brew uses --installed` |
+| `hold` | `apt-mark showhold` | `dnf versionlock list`¹² | *n/a*² | *n/a*² | `zypper locks` | `brew list --pinned` |
+| `hold <pkg>` | `apt-mark hold` | `dnf versionlock add`¹² | *n/a*² | *n/a*² | `zypper addlock` | `brew pin` |
+| `unhold` | `apt-mark unhold` | `dnf versionlock delete`¹² | *n/a*² | *n/a*² | `zypper removelock` | `brew unpin` |
+| `repo list` | `apt-cache policy` | `dnf repolist` | `pacman-conf --repo-list` | `cat /etc/apk/repositories` | `zypper repos` | `brew tap` |
+| `repo add` | `add-apt-repository` | `dnf config-manager --add-repo`¹² | *n/a*² | `… \| tee -a /etc/apk/repositories` | `zypper addrepo` | `brew tap` |
 
 | verb | yum | xbps | emerge | port | pkg (FreeBSD) | pkg_add (OpenBSD) | pkgin (NetBSD) |
 |---|---|---|---|---|---|---|---|
 | `install` | `yum install` | `xbps-install` | `emerge` | `port install` | `pkg install` | `pkg_add` | `pkgin install` |
 | `install <file>`⁷ | `yum install ./f` | *n/a*² | *n/a*² | *n/a*² | `pkg add` | `pkg_add ./f` | `pkg_add ./f` |
 | `remove` | `yum remove` | `xbps-remove` | `--deselect && --depclean` | `port uninstall` | `pkg delete` | `pkg_delete` | `pkgin remove` |
-| `search` | `yum search` | `xbps-query -Rs`⁹ | `emerge --search` | `port search` | `pkg search`⁹ | `pkg_info -Q`⁹ | `pkgin search`⁹ |
+| `purge` | *n/a*² | *n/a*² | *n/a*² | *n/a*² | *n/a*² | `pkg_delete -c` | *n/a*² |
+| `search` | `yum search`¹¹ | `xbps-query -Rs`¹¹ | `emerge --search`¹¹ | `port search`¹¹ | `pkg search`¹¹ | `pkg_info -Q`¹¹ | `pkgin search`¹¹ |
 | `info` | `yum info` | `xbps-query -RS`⁹ | `emerge -pv` | `port info` | `pkg search -e -f`⁹ | `pkg_info`⁵ | `pkgin pkg-descr`⁹ |
 | `refresh` | `yum makecache` | `xbps-install -S` | `emerge --sync` | `port sync` | `pkg update` | *n/a*² | `pkgin update` |
 | `upgrade` | `yum update` | `xbps-install -Su` | `--sync && -uDN @world` | `selfupdate && upgrade outdated` | `pkg upgrade` | `pkg_add -u` | `update && full-upgrade` |
 | `upgrade <pkg>` | `yum update` | `xbps-query && xbps-install -Su`¹⁰ | `--sync && emerge -1u` | `selfupdate && upgrade` | `pkg upgrade` | `pkg_add -u` | `update && install` |
-| `outdated` | `yum check-update`⁶ | `xbps-install -un` | `emerge -puDN @world` | `port outdated` | `pkg version -vRL=` | `pkg_add -un` | *n/a*² |
+| `outdated`⁶ | `yum check-update` | `xbps-install -un` | `emerge -puDN @world` | `port outdated` | `pkg version -vRL=` | `pkg_add -un`⁶ | *n/a*² |
 | `list` | `rpm -qa` | `xbps-query -l` | `qlist -Iv` | `port installed` | `pkg info` | `pkg_info` | `pkgin list` |
 | `list <pkg>` | `rpm -q` | `xbps-query -p pkgver`⁹ | `qlist -Iv` | `port -q installed \| grep .`⁹ | `pkg info` | `pkg_info -e`⁹ | `pkg_info -e`⁹ |
 | `autoremove` | `yum autoremove` | `xbps-remove -o` | `emerge --depclean` | `port uninstall leaves` | `pkg autoremove` | `pkg_delete -a` | `pkgin autoremove` |
+| `orphans` | *n/a*² | `xbps-remove -on` | `emerge -p --depclean` | `port echo leaves` | `pkg autoremove --dry-run` | `pkg_delete -an` | `pkgin -n autoremove` |
 | `clean` | `yum clean all` | `xbps-remove -O` | `eclean-dist` | `port clean --all` | `pkg clean` | *n/a*² | `pkgin clean` |
 | `owns` | `rpm -qf` | `xbps-query -o`⁹ | `qfile` | `port provides` | `pkg which`⁹ | `pkg_info -E`⁹ | `pkg_info -Fe` |
 | `files` | `rpm -ql` | `xbps-query -f`⁹ | `qlist` | `port contents` | `pkg info -l` | `pkg_info -L` | `pkgin pkg-content`⁹ |
+| `deps` | `yum deplist` | `xbps-query -Rx`⁹ | `equery depgraph --depth=1`⁹ | `port deps` | `pkg rquery '%dn-%dv'`⁹ | `pkg_info -f \| grep @depend` | `pkgin show-deps`⁹ |
+| `rdeps` | `repoquery --installed --whatrequires` | `xbps-query -X`⁹ | `equery depends`⁹ | `port dependents` | `pkg info -r` | `pkg_info -R` | `pkgin show-rev-deps`⁹ |
+| `hold` | `yum versionlock list` | `xbps-query -H` | *n/a*² | *n/a*² | `pkg lock -l` | *n/a*² | *n/a*² |
+| `hold <pkg>` | `yum versionlock add` | `xbps-pkgdb -m hold` | *n/a*² | *n/a*² | `pkg lock` | *n/a*² | *n/a*² |
+| `unhold` | `yum versionlock delete` | `xbps-pkgdb -m unhold` | *n/a*² | *n/a*² | `pkg unlock` | *n/a*² | *n/a*² |
+| `repo list` | `yum repolist` | `xbps-query -L` | `portageq get_repos /` | *n/a*² | `pkg -vv` | `cat /etc/installurl` | *n/a*² |
+| `repo add` | `yum-config-manager --add-repo` | *n/a*² | `eselect repository enable` | *n/a*² | *n/a*² | *n/a*² | *n/a*² |
 
 ¹ See [pacman and `refresh`](#pacman-and-refresh) below.
 ² Exits with code 3 and a one-line explanation of why the operation doesn't
@@ -195,8 +243,12 @@ shows pacman's own error on stderr).
 see [Upgrading a single package](#upgrading-a-single-package) below.
 ⁵ Details for installed packages only; OpenBSD has no repo-details command,
 so use `pkx search` for repository lookup.
-⁶ Native exit-code quirks pass through: `dnf`/`yum check-update` exits 100
-when updates exist, and `pacman -Qu` exits 1 when there are none.
+⁶ `outdated` exits **0** when everything is up to date, **100** when
+upgrades are available, and anything else is the native tool's error.
+`dnf`/`yum check-update` already work that way; for the others pkx passes
+the output through untouched while counting the outdated-package lines
+(`pacman -Qu`'s exit 1 for "nothing to do" becomes 0). OpenBSD's
+`pkg_add -un` is the one exception: its exit status passes through.
 ⁷ An operand ending in a package-file extension (`.deb`, `.rpm`, `.apk`,
 `.pkg.tar.*`, `.xbps`, `.pkg`, `.tgz`, `.txz`) is a local file; a bare file
 name gets `./` so apt treats it as a path. pacman, FreeBSD `pkg` and pkgin
@@ -207,9 +259,26 @@ once per package. `dpkg -s` can't be used: it exits 0 for a removed
 package whose config files remain (state `rc`).
 ⁹ These tools accept exactly one package/pattern per call (xbps-query
 errors with "too many arguments"), so pkx runs them once per operand,
-joined with `&&` (or `;` for `search`, so every term is searched).
+joined with `&&`.
 ¹⁰ `xbps-install -u` would *install* a named package that is missing, so
 pkx first checks each one with `xbps-query -p pkgver` (exit 2 if absent).
+¹¹ Several search terms mean *all* of them, everywhere. apt-cache and
+pacman already work that way; for the rest pkx searches for the first term
+and keeps only results that also match the others (`… | grep -i -e <term>`,
+or an awk filter over whole result blocks for port and emerge).
+¹² dnf5 (Fedora 41+) spells two of these differently, and pkx picks the
+form by whether a `dnf5` binary exists: `dnf repoquery
+--providers-of=requires` and `dnf config-manager addrepo
+--from-repofile=<url>`. dnf4 needs dnf-plugins-core for `config-manager`
+and python3-dnf-plugin-versionlock for `versionlock` (yum:
+yum-plugin-versionlock). `repo add` takes the URL of a `.repo` file.
+
+Some mappings call a standard helper that isn't always installed —
+`pactree` (pacman-contrib), `equery`/`eclean-dist` (gentoolkit),
+`qlist`/`qfile` (portage-utils), `eselect repository`
+(eselect-repository), `repoquery`/`yum-config-manager` (yum-utils),
+`add-apt-repository` (software-properties-common). pkx checks before
+running and names the package to install.
 
 Meta-commands:
 
@@ -218,6 +287,8 @@ Meta-commands:
 - `pkx help [command]` — general help, or one command's usage, aliases and
   native mapping on this system. `pkx <command> --help` is the same and
   runs nothing.
+- `pkx completion bash|zsh|fish` — print a completion script (see
+  [Shell completion](#shell-completion)).
 - `pkx raw [--] <args>` — escape hatch: pass args straight to the native tool
   (`pkx raw -Syu` on Arch runs `pacman -Syu`). Everything after `raw` is
   passed verbatim, including later `--` and flags like `-n`, so put pkx's
@@ -247,11 +318,27 @@ command.
 | `PKX_SUDO` | Privilege command to use for root operations. Default: plain when root, else `sudo`, else `doas`. Set it empty (`PKX_SUDO=`) to disable escalation, or e.g. `PKX_SUDO="sudo -E"` to customize. Treat it as trusted as your shell: it is executed as given. |
 | `PKX_QUIET` | Set to `1` to silence teaching mode persistently (same as `-q`); `0`, `no`, `false`, `off` or empty leave it on |
 
-**Exit codes:** `2` usage error, `3` operation not supported by this manager
-(including argument-dependent refusals, e.g. single-package upgrade on Arch),
-`1` no manager found (or a forced/detected manager whose binary is missing);
-anything else is the native tool's exit code, passed through untouched — so
-scripts can tell pkx problems from package problems.
+**Exit codes:** `2` usage error (including a missing `-y` without a
+terminal, below), `3` operation not supported by this manager (including
+argument-dependent refusals, e.g. single-package upgrade on Arch), `1` no
+manager found (or a forced/detected manager whose binary is missing), `100`
+from `outdated` when upgrades are available; anything else is the native
+tool's exit code, passed through untouched — so scripts can tell pkx
+problems from package problems.
+
+### Scripts and CI
+
+When stdin is not a terminal (a script, a Dockerfile `RUN`, CI) and `-y`
+wasn't given, pkx refuses any command that may stop to ask "Do you want to
+continue?" — exit 2, before anything runs. Otherwise the prompt would read
+end-of-file and decline, and on xbps a declined prompt even exits 0 having
+changed nothing, so the script would carry on believing it worked. Pass
+`-y` and the answer is explicit. Managers that never ask (apk, emerge,
+Homebrew, OpenBSD's pkg_add) and read-only commands are unaffected.
+
+Two other script-friendly contracts: `pkx list <pkg>...` exits 0 only when
+every named package is installed, and `pkx outdated` exits 0 when up to
+date and 100 when upgrades are available.
 
 ## Quirks and design notes
 
@@ -268,14 +355,16 @@ the system. There is no safe index-only refresh on Arch, so pkx refuses
 
 pkx never escalates for `brew` — Homebrew refuses to run as root by design.
 Every other manager gets `sudo`/`doas` only for verbs that need it
-(`install`, `remove`, `refresh`, `upgrade`, `autoremove`, `clean`); `search`,
-`info`, `list`, `owns` and `files` always run unprivileged.
+(`install`, `remove`, `purge`, `refresh`, `upgrade`, `autoremove`, `clean`,
+`hold <pkg>`, `unhold`, `repo add`); queries — `search`, `info`, `list`,
+`outdated`, `orphans`, `owns`, `files`, `deps`, `rdeps`, `hold` without
+operands, `repo list` — always run unprivileged.
 
 ### Gentoo
 
-`list`, `owns` and `files` use `qlist`/`qfile` from **portage-utils**, and
-`clean` uses `eclean-dist` from **gentoolkit** — the standard Gentoo admin
-tools. If one is missing, pkx checks the leading binary before running and
+`list`, `owns` and `files` use `qlist`/`qfile` from **portage-utils**;
+`clean`, `deps` and `rdeps` use `eclean-dist`/`equery` from **gentoolkit**;
+`repo add` uses **eselect-repository** — the standard Gentoo admin tools. If one is missing, pkx checks the leading binary before running and
 tells you which tool to install rather than failing mid-command; `pkx -n
 <verb>` shows you what would have run.
 
@@ -317,13 +406,13 @@ On **OpenBSD**, `-y` maps to `pkg_add -I` / `pkg_delete -I`, which force
 non-interactive mode there. (NetBSD's `pkg_add -I` means "skip install
 scripts", but NetBSD goes through pkgin, whose `-y` is used instead.)
 
-**Declined prompts:** without `-y` and with no terminal, xbps prints
-"Aborting!" and exits **0** having changed nothing, where apt, pacman and dnf
-exit 1. Use `-y` in scripts. pkgin's `-y` does not cover `autoremove`, which
-still asks.
+**Declined prompts at a terminal:** if you answer "n" yourself, xbps still
+exits 0 (apt, pacman and dnf exit 1). Without a terminal pkx requires `-y`
+instead (see [Scripts and CI](#scripts-and-ci)). pkgin's `-y` does not
+cover `autoremove`, which still asks.
 
-**Multiple search terms** mean "all terms" on apt, pacman and dnf but "any
-term" on apk and zypper; one term per search behaves the same everywhere.
+`pkx orphans` on **Arch** passes `pacman -Qdt`'s exit status through, which
+is 1 when there are no orphans.
 
 On **Termux**, pkx maps to apt and skips the not-running-as-root warning:
 Termux is rootless by design.
@@ -338,6 +427,28 @@ relies on `sudo`'s `secure_path` (default on) for the escalated command.
 If you use `PKX_SUDO="sudo -E"` or a `doas` config that keeps the
 environment, make sure your `PATH` contains no world-writable or relative
 entries.
+
+### `remove` and `purge`
+
+`remove` always uninstalls the named packages and never deletes
+configuration files you edited. `purge` also deletes those, and is refused
+(exit 3, with the native alternative) where the manager has no such
+operation. Whether no-longer-needed dependencies leave with the package is
+the manager's own policy — run `pkx orphans` / `pkx autoremove` afterwards
+for the same end state everywhere.
+
+| Manager | `remove` | dependencies | `purge` |
+|---|---|---|---|
+| apt | keeps all config files | stay (autoremove) | `apt-get purge` deletes config files |
+| dnf | edited config saved as `.rpmsave` | removed if unneeded | refused: rpm has no purge |
+| yum, zypper | edited config saved as `.rpmsave` | stay | refused: rpm has no purge |
+| pacman | edited config saved as `.pacsave` (`-Rs`) | removed if unneeded | `pacman -Rns` deletes them too |
+| apk | edited config kept | removed if unneeded | refused: apk-tools has no purge |
+| xbps, pkg | edited config kept | stay (autoremove) | refused |
+| emerge | edited config kept (CONFIG_PROTECT) | removed if unneeded (`--depclean`) | refused |
+| brew, port | — | stay (autoremove) | refused |
+| pkg_add | edited config kept | stay (autoremove) | `pkg_delete -c` |
+| pkgin | edited config kept; **also removes packages that depend on it** | stay | refused |
 
 ### Upgrading a single package
 
@@ -396,9 +507,12 @@ sh tests/test_dryrun.sh
 
 Every cell of the verb table above is asserted there, along with every
 alias, flag form, os-release detection (via `PKX_OS_RELEASE`, which points
-pkx at a different os-release file), and the Tumbleweed upgrade path. CI
-additionally runs `shellcheck --shell=sh`, `checkbashisms`, and the suite
-under `dash`, busybox `ash`, and `bash --posix`.
+pkx at a different os-release file), the Tumbleweed upgrade path, and —
+against stub binaries — the `outdated` exit codes and the no-terminal `-y`
+rule. The generated completion scripts are checked with `bash -n`, `zsh -n`
+and `fish -n`, and the bash one is exercised. CI additionally runs
+`shellcheck --shell=sh`, `checkbashisms`, and the suite under `dash`,
+busybox `ash`, and `bash --posix`.
 
 ## Changelog
 
@@ -409,9 +523,21 @@ dnf5 5.4 and zypper 1.14 in chroots, in addition to the dry-run suite.
 
 **Changed**
 
-- `orphans` is now `autoremove`, the name apt, dnf, yum, brew, pkg and pkgin
-  already use (it removes packages; "orphans" read like a listing).
-  `orphans` still works as an alias.
+- **`orphans` now only lists** unneeded dependencies; removing them is
+  `autoremove`, the name apt, dnf, yum, brew, pkg and pkgin already use.
+  In 0.4.0 `orphans` removed them — a script relying on that now gets a
+  read-only listing instead, the safe direction for such a change.
+- `remove` on Arch is `pacman -Rs` (was `-Rns`), so it keeps config files
+  you edited (as `.pacsave`), like `remove` on every other manager; the old
+  behavior is the new `purge`.
+- Several search terms now mean "all of them" on every manager (they meant
+  "any" on apk, zypper and several BSD tools, and errored on xbps).
+- `outdated` exits 0 when up to date and 100 when upgrades are available,
+  on every manager except OpenBSD (previously each tool's own convention:
+  dnf 100, pacman 1-for-none, most others always 0).
+- Without a terminal, commands that may prompt require `-y` (exit 2
+  otherwise), so a prompt can no longer silently decline — on xbps that
+  used to exit 0 having done nothing.
 - `installed <pkg>` folded into `list [pkg]...`: no operands lists
   everything, operands check them (exit 0 = all installed). `installed`
   still works as an alias. This also ends the one-typo gap between the
@@ -436,6 +562,22 @@ dnf5 5.4 and zypper 1.14 in chroots, in addition to the dry-run suite.
   apt treats it as a path; managers that cannot install files say so.
 - `pkx which` also shows the `raw` mapping, and `which`/`help` accept
   aliases.
+- `purge <pkg>...` — uninstall and delete config files (apt, pacman,
+  OpenBSD; refused with the native alternative elsewhere).
+- `orphans` — read-only list of what `autoremove` would remove (11 of 13
+  managers; Alpine never has any, and yum can't list them without starting
+  a removal).
+- `deps <pkg>...` and `rdeps <pkg>...` — what a package depends on, and
+  which installed packages depend on it (all 13 managers).
+- `hold [pkg]...` / `unhold <pkg>...` — pin packages at their version, or
+  list held ones (apt, dnf, yum, zypper, xbps, brew, FreeBSD pkg; refused
+  with the native alternative elsewhere).
+- `repo [list]` and `repo add <source> [name]` — list or add repositories
+  (list on 11 managers, add on 7).
+- `pkx completion bash|zsh|fish` — completion scripts generated from the
+  command table.
+- A missing helper tool is reported with the package that provides it
+  (e.g. `pactree` from pacman-contrib).
 
 **Fixed**
 

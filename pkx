@@ -25,8 +25,8 @@ PKX_VERSION="0.5.0"
 SUPPORTED_MGRS="apt dnf yum pacman apk zypper xbps emerge brew port pkg pkg_add pkgin"
 
 # Every command, in help order. Package verbs first, then meta-commands.
-PKG_VERBS="install remove search info list outdated refresh upgrade autoremove clean owns files"
-ALL_VERBS="$PKG_VERBS which raw help version"
+PKG_VERBS="install remove purge search info list outdated refresh upgrade autoremove orphans clean owns files deps rdeps hold unhold repo"
+ALL_VERBS="$PKG_VERBS which raw help version completion"
 
 # Where distro identification is read from (overridable for tests).
 OS_RELEASE=${PKX_OS_RELEASE:-/etc/os-release}
@@ -116,29 +116,44 @@ verb_info() {
         install)    VSYN="install <pkg>..."; VALIAS="i in add"
                     VDESC="Install packages (repository names or package files)" ;;
         remove)     VSYN="remove <pkg>...";  VALIAS="r rm uninstall del"
-                    VDESC="Uninstall packages" ;;
+                    VDESC="Uninstall packages (config files you edited are kept)" ;;
+        purge)      VSYN="purge <pkg>..."
+                    VDESC="Uninstall packages and delete their config files" ;;
         search)     VSYN="search <term>..."; VALIAS="s se find"
-                    VDESC="Search the repositories" ;;
+                    VDESC="Search the repositories (results match all terms)" ;;
         info)       VSYN="info <pkg>...";    VALIAS="show"
                     VDESC="Show package details" ;;
         list)       VSYN="list [pkg]...";    VALIAS="l ls installed"
                     VDESC="List installed packages, or check that the named"
                     VDESC2="packages are installed (exit 0 = all installed)" ;;
         outdated)   VSYN="outdated";         VALIAS="updates"
-                    VDESC="List packages that have upgrades available" ;;
+                    VDESC="List packages that have upgrades available"
+                    VDESC2="(exit 0 = up to date, 100 = upgrades available)" ;;
         refresh)    VSYN="refresh"
                     VDESC="Update the package index only" ;;
         upgrade)    VSYN="upgrade [pkg]..."; VALIAS="u up"
                     VDESC="Refresh the index, then upgrade everything (or"
                     VDESC2="only the named packages)" ;;
-        autoremove) VSYN="autoremove";       VALIAS="orphans"
+        autoremove) VSYN="autoremove"
                     VDESC="Remove dependencies that are no longer needed" ;;
+        orphans)    VSYN="orphans";          VALIAS="unneeded"
+                    VDESC="List those dependencies (removes nothing)" ;;
         clean)      VSYN="clean";            VALIAS="cleanup"
                     VDESC="Clear the package cache" ;;
         owns)       VSYN="owns <file>...";   VALIAS="owner"
                     VDESC="Show which package owns a file" ;;
         files)      VSYN="files <pkg>...";   VALIAS="contents"
                     VDESC="List the files a package installed" ;;
+        deps)       VSYN="deps <pkg>...";    VALIAS="depends"
+                    VDESC="List what a package depends on" ;;
+        rdeps)      VSYN="rdeps <pkg>...";   VALIAS="rdepends"
+                    VDESC="List installed packages that depend on a package" ;;
+        hold)       VSYN="hold [pkg]...";    VALIAS="pin lock"
+                    VDESC="Keep packages at their version, or list held ones" ;;
+        unhold)     VSYN="unhold <pkg>...";  VALIAS="unpin unlock"
+                    VDESC="Let held packages upgrade again" ;;
+        repo)       VSYN="repo [list|add]";  VALIAS="repos"
+                    VDESC="List repositories, or 'repo add <source> [name]'" ;;
         which)      VSYN="which [command]"
                     VDESC="Show the detected manager and what every command"
                     VDESC2="runs here (or just one command)" ;;
@@ -148,6 +163,8 @@ verb_info() {
                     VDESC="Show help (for one command: also what it runs here)" ;;
         version)    VSYN="version"
                     VDESC="Show version" ;;
+        completion) VSYN="completion <shell>"
+                    VDESC="Print a bash, zsh or fish completion script" ;;
     esac
 }
 
@@ -189,8 +206,8 @@ usage() {
     printf 'Usage: pkx [flags] <command> [args]\n\nCommands:\n'
     for _v in $ALL_VERBS; do
         verb_info "$_v"
-        printf '  %-17s %s\n' "$VSYN" "$VDESC"
-        [ -z "$VDESC2" ] || printf '  %-17s %s\n' "" "$VDESC2"
+        printf '  %-18s %s\n' "$VSYN" "$VDESC"
+        [ -z "$VDESC2" ] || printf '  %-18s %s\n' "" "$VDESC2"
     done
     printf '\nAliases:\n'
     print_aliases
@@ -224,9 +241,16 @@ Supported managers (for --via / PKX_MANAGER):
 pkx prints the native command it is about to run, so every use teaches
 you the real command for this system. Silence it with -q.
 
-Exit codes: 2 usage error, 3 operation unsupported by this manager,
-1 no manager found or a required binary missing; otherwise the native
-tool's exit code.
+Without a terminal (scripts, CI), commands that may ask for confirmation
+need -y, so a prompt can never silently decline.
+
+Exit codes: 2 usage error (including a missing -y without a terminal),
+3 operation unsupported by this manager, 1 no manager found or a required
+binary missing, 100 from 'outdated' when upgrades are available;
+otherwise the native tool's exit code.
+
+Shell completion: eval "\$(pkx completion bash)" (or zsh), or
+pkx completion fish | source
 EOF
 }
 
@@ -359,12 +383,42 @@ resolve_sudo() {
     fi
 }
 
-# Does this verb need root for the current manager?
+# needs_root <verb> [operand count] — does this verb need root for the
+# current manager? (hold with no operands only lists the holds.)
 needs_root() {
     [ "$MGR" = brew ] && return 1   # Homebrew refuses to run under sudo
     case "$1" in
-        install|remove|refresh|upgrade|autoremove|clean) return 0 ;;
+        install|remove|purge|refresh|upgrade|autoremove|clean|unhold|repo-add) return 0 ;;
+        hold) [ "${2:-0}" -gt 0 ] ;;
         *) return 1 ;;
+    esac
+}
+
+# may_prompt <verb> [operand count] — can this command stop to ask "Do you
+# want to continue?" on the current manager without -y? apk, emerge, brew
+# and OpenBSD's pkg_add never ask (pkg_add only does on a terminal).
+may_prompt() {
+    case "$MGR" in apk|emerge|brew|pkg_add) return 1 ;; esac
+    case "$1" in
+        install|remove|purge|upgrade|autoremove) return 0 ;;
+        clean)  [ "$MGR" = pacman ] || [ "$MGR" = pkg ] ;;
+        hold)   [ "$MGR" = pkg ] && [ "${2:-0}" -gt 0 ] ;;
+        unhold) [ "$MGR" = pkg ] ;;
+        repo-add) [ "$MGR" = apt ] ;;   # add-apt-repository waits for Enter
+        *) return 1 ;;
+    esac
+}
+
+# The package that provides a helper binary pkx may call, for the
+# "not installed" message.
+req_hint() {
+    case "$1" in
+        qlist|qfile)               echo " (from portage-utils)" ;;
+        eclean-dist|equery)        echo " (from gentoolkit)" ;;
+        eselect)                   echo " (from eselect-repository)" ;;
+        pactree)                   echo " (from pacman-contrib)" ;;
+        repoquery|yum-config-manager) echo " (from yum-utils)" ;;
+        add-apt-repository)        echo " (from software-properties-common)" ;;
     esac
 }
 
@@ -392,6 +446,42 @@ unsup_local() {
     UNSUP_OP="installing a package file"
     UNSUP=$1
 }
+unsup_purge_rpm() {
+    UNSUP="rpm already deletes unmodified config files on removal and saves edited ones as .rpmsave; there is no purge, so use 'pkx remove' and delete the .rpmsave files"
+}
+unsup_purge_kept() {
+    UNSUP="$1 keeps only the config files you edited and has no option to delete them; use 'pkx remove' and delete them by hand"
+}
+
+# one_source <operand count> — for 'repo add' on tools that take only a
+# source (no separate name).
+one_source() {
+    [ "$1" -le 1 ] && return 0
+    UNSUP_OP="naming a repository"
+    UNSUP="$MGR takes just the repository source; drop the name"
+    return 1
+}
+
+# search_and <command> <grep|para> <term>... — search for the first term
+# natively, then keep only results that also match every other term (case-
+# insensitive), so several terms mean "all of them" on every manager, as
+# they already do for apt-cache and pacman. 'para' filters the blank-line-
+# separated result blocks of port and emerge instead of single lines.
+search_and() {
+    _cmd=$1; _mode=$2; shift 2
+    q1 "$1"
+    case $1 in -*) _q="-- $_q" ;; esac
+    NATIVE="$_cmd $_q"
+    shift
+    for _t in "$@"; do
+        q1 "$_t"
+        if [ "$_mode" = para ]; then
+            NATIVE="$NATIVE | awk -v RS= -v ORS='\\n\\n' -v t=$_q 'tolower(\$0) ~ tolower(t)'"
+        else
+            NATIVE="$NATIVE | grep -i -e $_q"
+        fi
+    done
+}
 
 build_apt() {
     yesflag -y
@@ -399,7 +489,8 @@ build_apt() {
     case "$v" in
         install) NATIVE="${E}apt-get install$y $pk" ;;
         remove)  NATIVE="${E}apt-get remove$y $pk" ;;
-        search)  NATIVE="apt-cache search $pk" ;;
+        purge)   NATIVE="${E}apt-get purge$y $pk" ;;
+        search)  NATIVE="apt-cache search $pk" ;;   # all terms must match natively
         info)    NATIVE="apt-cache show $pk" ;;
         refresh) NATIVE="${E}apt-get update" ;;
         upgrade)
@@ -411,7 +502,7 @@ build_apt() {
             else
                 NATIVE="${E}apt-get update; ${E}apt-get dist-upgrade$y"
             fi ;;
-        outdated) NATIVE="apt list --upgradable" ;;
+        outdated) NATIVE="apt list --upgradable"; OUTCOUNT="/upgradable from/" ;;
         list)
             # 'dpkg -s' exits 0 for a removed package whose config files
             # remain (state rc), so check the status field explicitly.
@@ -421,51 +512,89 @@ build_apt() {
                 NATIVE="apt list --installed"
             fi ;;
         autoremove) NATIVE="${E}apt-get autoremove$y" ;;
+        orphans) NATIVE="apt-get --simulate autoremove" ;;
         clean)   NATIVE="${E}apt-get clean" ;;
         owns)    NATIVE="dpkg -S $pk" ;;
         files)   NATIVE="dpkg -L $pk" ;;
+        deps)    NATIVE="apt-cache depends $pk" ;;
+        rdeps)   NATIVE="apt-cache rdepends --installed $pk" ;;
+        hold)    if [ -n "$pk" ]; then NATIVE="${E}apt-mark hold $pk"; else NATIVE="apt-mark showhold"; fi ;;
+        unhold)  NATIVE="${E}apt-mark unhold $pk" ;;
+        repo-list) NATIVE="apt-cache policy" ;;
+        repo-add)  one_source $# && NATIVE="${E}add-apt-repository$y $pk" ;;
     esac
 }
 
+# dnf5 (Fedora 41+) changed a few subcommands; it installs a dnf5 binary.
 build_dnf() {
     yesflag -y
-    case "$1" in
+    v=$1; shift
+    case "$v" in
         install) NATIVE="${E}dnf install$y $pk" ;;
         remove)  NATIVE="${E}dnf remove$y $pk" ;;
-        search)  NATIVE="dnf search $pk" ;;
+        purge)   unsup_purge_rpm ;;
+        search)  search_and "dnf search" grep "$@" ;;
         info)    NATIVE="dnf info $pk" ;;
         refresh) NATIVE="${E}dnf makecache" ;;
         upgrade) NATIVE="${E}dnf upgrade --refresh$y${pk:+ $pk}" ;;
-        outdated) NATIVE="dnf check-update" ;;
+        outdated) NATIVE="dnf check-update" ;;   # already 0 / 100 / error
         list)    if [ -n "$pk" ]; then NATIVE="rpm -q $pk"; else NATIVE="rpm -qa"; fi ;;
         autoremove) NATIVE="${E}dnf autoremove$y" ;;
+        orphans) NATIVE="dnf repoquery --unneeded" ;;
         clean)   NATIVE="${E}dnf clean all" ;;
         owns)    NATIVE="rpm -qf $pk" ;;
         files)   NATIVE="rpm -ql $pk" ;;
+        deps)
+            if has dnf5; then
+                NATIVE="dnf repoquery --providers-of=requires $pk"
+            else
+                NATIVE="dnf repoquery --requires --resolve $pk"
+            fi ;;
+        rdeps)   NATIVE="dnf repoquery --installed --whatrequires $pk" ;;
+        hold)    if [ -n "$pk" ]; then NATIVE="${E}dnf versionlock add $pk"; else NATIVE="dnf versionlock list"; fi ;;
+        unhold)  NATIVE="${E}dnf versionlock delete $pk" ;;
+        repo-list) NATIVE="dnf repolist" ;;
+        repo-add)
+            if ! one_source $#; then :
+            elif has dnf5; then
+                NATIVE="${E}dnf config-manager addrepo --from-repofile=$pk"
+            else
+                NATIVE="${E}dnf config-manager --add-repo $pk"
+            fi ;;
     esac
 }
 
 build_yum() {
     yesflag -y
-    case "$1" in
+    v=$1; shift
+    case "$v" in
         install) NATIVE="${E}yum install$y $pk" ;;
         remove)  NATIVE="${E}yum remove$y $pk" ;;
-        search)  NATIVE="yum search $pk" ;;
+        purge)   unsup_purge_rpm ;;
+        search)  search_and "yum search" grep "$@" ;;
         info)    NATIVE="yum info $pk" ;;
         refresh) NATIVE="${E}yum makecache" ;;
         upgrade) NATIVE="${E}yum update$y${pk:+ $pk}" ;;
-        outdated) NATIVE="yum check-update" ;;
+        outdated) NATIVE="yum check-update" ;;   # already 0 / 100 / error
         list)    if [ -n "$pk" ]; then NATIVE="rpm -q $pk"; else NATIVE="rpm -qa"; fi ;;
         autoremove) NATIVE="${E}yum autoremove$y" ;;
+        orphans) UNSUP="yum cannot list unneeded packages without starting a removal; 'pkx autoremove' (without -y) shows them and asks first" ;;
         clean)   NATIVE="${E}yum clean all" ;;
         owns)    NATIVE="rpm -qf $pk" ;;
         files)   NATIVE="rpm -ql $pk" ;;
+        deps)    NATIVE="yum deplist $pk" ;;
+        rdeps)   NATIVE="repoquery --installed --whatrequires $pk" ;;
+        hold)    if [ -n "$pk" ]; then NATIVE="${E}yum versionlock add $pk"; else NATIVE="yum versionlock list"; fi ;;
+        unhold)  NATIVE="${E}yum versionlock delete $pk" ;;
+        repo-list) NATIVE="yum repolist" ;;
+        repo-add)  one_source $# && NATIVE="${E}yum-config-manager --add-repo $pk" ;;
     esac
 }
 
 build_pacman() {
     yesflag --noconfirm
-    case "$1" in
+    v=$1; shift
+    case "$v" in
         install)
             # package files go through -U; -S only knows repository names
             case "$LOCAL" in
@@ -475,8 +604,11 @@ build_pacman() {
                 # as on every other manager, instead of being reinstalled
                 *)    NATIVE="${E}pacman -S --needed$y $pk" ;;
             esac ;;
-        remove)  NATIVE="${E}pacman -Rns$y $pk" ;;
-        search)  NATIVE="pacman -Ss $pk" ;;
+        # -s takes unneeded dependencies along; without -n, edited config
+        # files are kept as .pacsave. purge adds -n to delete those too.
+        remove)  NATIVE="${E}pacman -Rs$y $pk" ;;
+        purge)   NATIVE="${E}pacman -Rns$y $pk" ;;
+        search)  NATIVE="pacman -Ss $pk" ;;   # all terms must match natively
         info)    NATIVE="pacman -Si $pk" ;;
         refresh) UNSUP="bare 'pacman -Sy' risks a partial upgrade that can break Arch; use 'pkx upgrade' (-Syu) instead" ;;
         upgrade)
@@ -486,41 +618,58 @@ build_pacman() {
             else
                 NATIVE="${E}pacman -Syu$y"
             fi ;;
-        outdated) NATIVE="pacman -Qu" ;;
+        # -Qu exits 1 when nothing is outdated
+        outdated) NATIVE="pacman -Qu"; OUTCOUNT="NF"; OUTNONE=1 ;;
         list)    NATIVE="pacman -Q${pk:+ $pk}" ;;
         autoremove) REQ=pacman
                  NATIVE="if orphans=\$(pacman -Qdtq); then ${E}pacman -Rns$y \$orphans; else echo 'pkx: no orphaned packages to remove'; fi" ;;
+        orphans) NATIVE="pacman -Qdt" ;;
         clean)   NATIVE="${E}pacman -Sc$y" ;;
         owns)    NATIVE="pacman -Qo $pk" ;;
         files)   NATIVE="pacman -Ql $pk" ;;
+        # pactree (pacman-contrib) takes one package per call
+        deps)    each '&&' "pactree -s -d1 -u" "" "$@" ;;
+        rdeps)   each '&&' "pactree -r -d1 -u" "" "$@" ;;
+        hold|unhold) UNSUP="pacman has no hold command; list the package in IgnorePkg in /etc/pacman.conf (holding back one package is a partial upgrade)" ;;
+        repo-list) NATIVE="pacman-conf --repo-list" ;;
+        repo-add)  UNSUP="pacman repositories are sections in /etc/pacman.conf; add one there" ;;
     esac
 }
 
 build_apk() {
     # apk is non-interactive by default; -y is a no-op here
-    case "$1" in
+    v=$1; shift
+    case "$v" in
         install) NATIVE="${E}apk add $pk" ;;
         remove)  NATIVE="${E}apk del $pk" ;;
-        search)  NATIVE="apk search $pk" ;;
+        purge)   UNSUP="apk deletes unmodified config files on removal and keeps edited ones; apk-tools has no purge option" ;;
+        search)  search_and "apk search" grep "$@" ;;
         info)    NATIVE="apk search -e -v $pk" ;;
         refresh) NATIVE="${E}apk update" ;;
         upgrade) NATIVE="${E}apk update && ${E}apk upgrade${pk:+ $pk}" ;;
-        outdated) NATIVE="apk list -u" ;;
+        outdated) NATIVE="apk list -u"; OUTCOUNT="NF" ;;
         list)
             if [ -n "$pk" ]; then NATIVE="apk info -e $pk"; else NATIVE="apk list --installed"; fi ;;
-        autoremove) UNSUP="apk removes unneeded dependencies automatically when you 'pkx remove' a package" ;;
+        autoremove|orphans) UNSUP="apk removes unneeded dependencies automatically when you 'pkx remove' a package, so there are never any" ;;
         clean)   NATIVE="${E}apk cache clean" ;;
         owns)    NATIVE="apk info --who-owns $pk" ;;
         files)   NATIVE="apk info -L $pk" ;;
+        deps)    NATIVE="apk info -R $pk" ;;
+        rdeps)   NATIVE="apk info -r $pk" ;;
+        hold|unhold) UNSUP="apk pins versions with world constraints instead: 'pkx install <pkg>=<version>' holds it, 'pkx install <pkg>' releases it" ;;
+        repo-list) NATIVE="cat /etc/apk/repositories" ;;
+        repo-add)  NATIVE="printf '%s\\n' $pk | ${E}tee -a /etc/apk/repositories" ;;
     esac
 }
 
 build_zypper() {
     yesflag --non-interactive
-    case "$1" in
+    v=$1; shift
+    case "$v" in
         install) NATIVE="${E}zypper$y install $pk" ;;
         remove)  NATIVE="${E}zypper$y remove $pk" ;;
-        search)  NATIVE="zypper search $pk" ;;
+        purge)   unsup_purge_rpm ;;
+        search)  search_and "zypper search" grep "$@" ;;
         info)    NATIVE="zypper info $pk" ;;
         refresh) NATIVE="${E}zypper refresh" ;;
         upgrade)
@@ -543,13 +692,20 @@ build_zypper() {
                 fi
                 NATIVE="${E}zypper refresh && ${E}zypper$y update${pk:+ $pk}"
             fi ;;
-        outdated) NATIVE="zypper list-updates" ;;
+        outdated) NATIVE="zypper list-updates"; OUTCOUNT="/^v /" ;;
         list)
             if [ -n "$pk" ]; then NATIVE="rpm -q $pk"; else NATIVE="zypper search --installed-only"; fi ;;
-        autoremove) UNSUP="zypper has no autoremove; remove a package with its deps via 'zypper remove --clean-deps <pkg>'" ;;
+        autoremove) UNSUP="zypper has no autoremove; 'pkx orphans' lists unneeded packages, or remove a package with its deps via 'zypper remove --clean-deps <pkg>'" ;;
+        orphans) NATIVE="zypper packages --unneeded" ;;
         clean)   NATIVE="${E}zypper clean --all" ;;
         owns)    NATIVE="rpm -qf $pk" ;;
         files)   NATIVE="rpm -ql $pk" ;;
+        deps)    NATIVE="zypper info --requires $pk" ;;
+        rdeps)   NATIVE="zypper search --installed-only --requires-pkg $pk" ;;
+        hold)    if [ -n "$pk" ]; then NATIVE="${E}zypper addlock $pk"; else NATIVE="zypper locks"; fi ;;
+        unhold)  NATIVE="${E}zypper removelock $pk" ;;
+        repo-list) NATIVE="zypper repos" ;;
+        repo-add)  NATIVE="${E}zypper addrepo $pk" ;;   # <url> [alias]
     esac
 }
 
@@ -566,7 +722,8 @@ build_xbps() {
                 NATIVE="${E}xbps-install$y $pk"
             fi ;;
         remove)  NATIVE="${E}xbps-remove$y $pk" ;;
-        search)  each ';' "xbps-query -Rs" "" "$@" ;;
+        purge)   unsup_purge_kept "xbps-remove" ;;
+        search)  search_and "xbps-query -Rs" grep "$@" ;;
         info)    each '&&' "xbps-query -RS" "" "$@" ;;
         refresh) NATIVE="${E}xbps-install -S" ;;
         upgrade)
@@ -578,7 +735,7 @@ build_xbps() {
             else
                 NATIVE="${E}xbps-install -Su$y"
             fi ;;
-        outdated) NATIVE="xbps-install -un" ;;
+        outdated) NATIVE="xbps-install -un"; OUTCOUNT="NF" ;;
         list)
             if [ -n "$pk" ]; then
                 each '&&' "xbps-query -p pkgver" "" "$@"
@@ -586,17 +743,26 @@ build_xbps() {
                 NATIVE="xbps-query -l"
             fi ;;
         autoremove) NATIVE="${E}xbps-remove -o$y" ;;
+        orphans) NATIVE="xbps-remove -on" ;;
         clean)   NATIVE="${E}xbps-remove -O$y" ;;
         owns)    each '&&' "xbps-query -o" "" "$@" ;;
         files)   each '&&' "xbps-query -f" "" "$@" ;;
+        deps)    each '&&' "xbps-query -Rx" "" "$@" ;;
+        rdeps)   each '&&' "xbps-query -X" "" "$@" ;;
+        hold)    if [ -n "$pk" ]; then NATIVE="${E}xbps-pkgdb -m hold $pk"; else NATIVE="xbps-query -H"; fi ;;
+        unhold)  NATIVE="${E}xbps-pkgdb -m unhold $pk" ;;
+        repo-list) NATIVE="xbps-query -L" ;;
+        repo-add)  UNSUP="xbps reads repositories from 'repository=<url>' lines in files under /etc/xbps.d/; add one there" ;;
     esac
 }
 
 build_emerge() {
     # emerge is non-interactive unless --ask is given; -y is a no-op.
-    # list/owns/files use portage-utils (qlist/qfile); clean uses
-    # gentoolkit (eclean-dist). Both are standard Gentoo admin tools.
-    case "$1" in
+    # list/owns/files use portage-utils (qlist/qfile); clean, deps and
+    # rdeps use gentoolkit (eclean-dist, equery); repo add uses
+    # eselect-repository. All are standard Gentoo admin tools.
+    v=$1; shift
+    case "$v" in
         install)
             if [ -n "$LOCAL" ]; then
                 unsup_local "portage installs from ebuilds or its own binary package host, not from a package file"
@@ -604,7 +770,8 @@ build_emerge() {
                 NATIVE="${E}emerge $pk"
             fi ;;
         remove)  NATIVE="${E}emerge --deselect $pk && ${E}emerge --depclean $pk" ;;
-        search)  NATIVE="emerge --search $pk" ;;
+        purge)   unsup_purge_kept "portage (CONFIG_PROTECT)" ;;
+        search)  search_and "emerge --search" para "$@" ;;
         info)    NATIVE="emerge --pretend --verbose $pk" ;;
         refresh) NATIVE="${E}emerge --sync" ;;
         upgrade)
@@ -614,18 +781,26 @@ build_emerge() {
             else
                 NATIVE="${E}emerge --sync && ${E}emerge --update --deep --newuse @world"
             fi ;;
-        outdated) NATIVE="emerge --pretend --update --deep --newuse @world" ;;
+        outdated) NATIVE="emerge --pretend --update --deep --newuse @world"
+                  OUTCOUNT="/^\\[(ebuild|binary)/" ;;
         list)    NATIVE="qlist -Iv${pk:+ $pk}" ;;
         autoremove) NATIVE="${E}emerge --depclean" ;;
+        orphans) NATIVE="emerge --pretend --depclean" ;;
         clean)   NATIVE="${E}eclean-dist" ;;
         owns)    NATIVE="qfile $pk" ;;
         files)   NATIVE="qlist $pk" ;;
+        deps)    each '&&' "equery depgraph --depth=1" "" "$@" ;;
+        rdeps)   each '&&' "equery depends" "" "$@" ;;
+        hold|unhold) UNSUP="portage holds a version by masking newer ones in /etc/portage/package.mask" ;;
+        repo-list) NATIVE="portageq get_repos /" ;;
+        repo-add)  NATIVE="${E}eselect repository enable $pk" ;;
     esac
 }
 
 build_brew() {
     # Homebrew must never run under sudo; it is non-interactive already.
-    case "$1" in
+    v=$1; shift
+    case "$v" in
         install)
             if [ -n "$LOCAL" ]; then
                 unsup_local "Homebrew installs formulae and casks, not package files; for a macOS .pkg installer run 'sudo installer -pkg <file> -target /'"
@@ -633,16 +808,24 @@ build_brew() {
                 NATIVE="brew install $pk"
             fi ;;
         remove)  NATIVE="brew uninstall $pk" ;;
-        search)  NATIVE="brew search $pk" ;;
+        purge)   UNSUP="Homebrew formulae keep no system configuration to purge; for a cask, 'pkx raw -- uninstall --zap <cask>' also removes its app data" ;;
+        search)  search_and "brew search" grep "$@" ;;
         info)    NATIVE="brew info $pk" ;;
         refresh) NATIVE="brew update" ;;
         upgrade) NATIVE="brew update && brew upgrade${pk:+ $pk}" ;;
-        outdated) NATIVE="brew outdated" ;;
+        outdated) NATIVE="brew outdated"; OUTCOUNT="NF" ;;
         list)    NATIVE="brew list --versions${pk:+ $pk}" ;;
         autoremove) NATIVE="brew autoremove" ;;
+        orphans) NATIVE="brew autoremove --dry-run" ;;
         clean)   NATIVE="brew cleanup" ;;
         owns)    UNSUP="Homebrew cannot map an arbitrary file back to a package" ;;
         files)   NATIVE="brew list --verbose $pk" ;;
+        deps)    NATIVE="brew deps $pk" ;;
+        rdeps)   NATIVE="brew uses --installed $pk" ;;
+        hold)    if [ -n "$pk" ]; then NATIVE="brew pin $pk"; else NATIVE="brew list --pinned"; fi ;;
+        unhold)  NATIVE="brew unpin $pk" ;;
+        repo-list) NATIVE="brew tap" ;;
+        repo-add)  NATIVE="brew tap $pk" ;;   # <user/repo> [url]
     esac
 }
 
@@ -657,11 +840,12 @@ build_port() {
                 NATIVE="${E}port$y install $pk"
             fi ;;
         remove)  NATIVE="${E}port$y uninstall $pk" ;;
-        search)  NATIVE="port search $pk" ;;
+        purge)   UNSUP="MacPorts has no purge; 'pkx remove' uninstalls the port and leaves its files in the prefix's etc/ alone" ;;
+        search)  search_and "port search" para "$@" ;;
         info)    NATIVE="port info $pk" ;;
         refresh) NATIVE="${E}port sync" ;;
         upgrade) NATIVE="${E}port selfupdate && ${E}port$y upgrade ${pk:-outdated}" ;;
-        outdated) NATIVE="port outdated" ;;
+        outdated) NATIVE="port outdated"; OUTCOUNT="/ < /" ;;
         list)
             # port always exits 0; grep supplies the yes/no exit code, once
             # per port so one installed port cannot vouch for another
@@ -671,14 +855,19 @@ build_port() {
                 NATIVE="port installed"
             fi ;;
         autoremove) NATIVE="${E}port$y uninstall leaves" ;;
+        orphans) NATIVE="port echo leaves" ;;
         clean)   NATIVE="${E}port clean --all installed" ;;
         owns)    NATIVE="port provides $pk" ;;
         files)   NATIVE="port contents $pk" ;;
+        deps)    NATIVE="port deps $pk" ;;
+        rdeps)   NATIVE="port dependents $pk" ;;
+        hold|unhold) UNSUP="MacPorts cannot hold a port at its version" ;;
+        repo-list|repo-add) UNSUP="MacPorts sources are lines in macports/sources.conf under its prefix (usually /opt/local/etc); edit that file" ;;
     esac
 }
 
 build_pkg() {
-    # pkg search and pkg which take exactly one pattern/file per call.
+    # pkg which, rquery and search take exactly one argument per call.
     yesflag -y
     v=$1; shift
     case "$v" in
@@ -690,16 +879,24 @@ build_pkg() {
                 *)    NATIVE="${E}pkg install$y $pk" ;;
             esac ;;
         remove)  NATIVE="${E}pkg delete$y $pk" ;;
-        search)  each ';' "pkg search" "" "$@" ;;
+        purge)   unsup_purge_kept "pkg delete" ;;
+        search)  search_and "pkg search" grep "$@" ;;
         info)    each '&&' "pkg search -e -f" "" "$@" ;;
         refresh) NATIVE="${E}pkg update" ;;
         upgrade) NATIVE="${E}pkg upgrade$y${pk:+ $pk}" ;;
-        outdated) NATIVE="pkg version -vRL=" ;;
+        outdated) NATIVE="pkg version -vRL="; OUTCOUNT="/needs updating/" ;;
         list)    NATIVE="pkg info${pk:+ $pk}" ;;
         autoremove) NATIVE="${E}pkg autoremove$y" ;;
+        orphans) NATIVE="pkg autoremove --dry-run" ;;
         clean)   NATIVE="${E}pkg clean$y" ;;
         owns)    each '&&' "pkg which" "" "$@" ;;
         files)   NATIVE="pkg info -l $pk" ;;
+        deps)    each '&&' "pkg rquery '%dn-%dv'" "" "$@" ;;
+        rdeps)   NATIVE="pkg info -r $pk" ;;
+        hold)    if [ -n "$pk" ]; then NATIVE="${E}pkg lock$y $pk"; else NATIVE="pkg lock -l"; fi ;;
+        unhold)  NATIVE="${E}pkg unlock$y $pk" ;;
+        repo-list) NATIVE="pkg -vv" ;;
+        repo-add)  UNSUP="pkg reads repositories from files in /usr/local/etc/pkg/repos/; add a <name>.conf there" ;;
     esac
 }
 
@@ -712,11 +909,12 @@ build_pkg_add() {
     case "$v" in
         install) NATIVE="${E}pkg_add$y $pk" ;;
         remove)  NATIVE="${E}pkg_delete$y $pk" ;;
-        search)  each ';' "pkg_info -Q" "" "$@" ;;
+        purge)   NATIVE="${E}pkg_delete$y -c $pk" ;;   # -c: also config files
+        search)  search_and "pkg_info -Q" grep "$@" ;;
         info)    NATIVE="pkg_info $pk" ;;
         refresh) UNSUP="OpenBSD has no separate index refresh; pkg_add always queries the mirrors" ;;
         upgrade) NATIVE="${E}pkg_add$y -u${pk:+ $pk}" ;;
-        outdated) NATIVE="pkg_add -un" ;;
+        outdated) NATIVE="pkg_add -un" ;;   # exit code not normalized
         list)
             if [ -n "$pk" ]; then
                 each '&&' "pkg_info -e" "" "$@"
@@ -724,15 +922,22 @@ build_pkg_add() {
                 NATIVE="pkg_info"
             fi ;;
         autoremove) NATIVE="${E}pkg_delete$y -a" ;;
+        orphans) NATIVE="pkg_delete -an" ;;
         clean)   UNSUP="OpenBSD keeps no package cache to clean" ;;
         owns)    each '&&' "pkg_info -E" "" "$@" ;;
         files)   NATIVE="pkg_info -L $pk" ;;
+        deps)    NATIVE="pkg_info -f $pk | grep '^@depend'" ;;
+        rdeps)   NATIVE="pkg_info -R $pk" ;;
+        hold|unhold) UNSUP="pkg_add cannot hold a package; upgrade selectively with 'pkx upgrade <pkg>' instead" ;;
+        repo-list) NATIVE="cat /etc/installurl" ;;
+        repo-add)  UNSUP="OpenBSD uses the single mirror in /etc/installurl; edit that file" ;;
     esac
 }
 
 build_pkgin() {
-    # pkgin search/pkg-descr/pkg-content take exactly one argument, so
-    # those run per operand. pkgin's -y does not cover autoremove.
+    # pkgin search/pkg-descr/pkg-content/show-deps take exactly one
+    # argument, so those run per operand. pkgin's -y does not cover
+    # autoremove.
     yesflag -y
     v=$1; shift
     case "$v" in
@@ -744,7 +949,8 @@ build_pkgin() {
                 *)    NATIVE="${E}pkgin$y install $pk" ;;
             esac ;;
         remove)  NATIVE="${E}pkgin$y remove $pk" ;;
-        search)  each ';' "pkgin search" "" "$@" ;;
+        purge)   unsup_purge_kept "pkgin" ;;
+        search)  search_and "pkgin search" grep "$@" ;;
         info)    each '&&' "pkgin pkg-descr" "" "$@" ;;
         refresh) NATIVE="${E}pkgin update" ;;
         upgrade)
@@ -761,9 +967,14 @@ build_pkgin() {
                 NATIVE="pkgin list"
             fi ;;
         autoremove) NATIVE="${E}pkgin$y autoremove" ;;
+        orphans) NATIVE="pkgin -n autoremove" ;;
         clean)   NATIVE="${E}pkgin clean" ;;
         owns)    NATIVE="pkg_info -Fe $pk" ;;
         files)   each '&&' "pkgin pkg-content" "" "$@" ;;
+        deps)    each '&&' "pkgin show-deps" "" "$@" ;;
+        rdeps)   each '&&' "pkgin show-rev-deps" "" "$@" ;;
+        hold|unhold) UNSUP="pkgin cannot hold a package at its version" ;;
+        repo-list|repo-add) UNSUP="pkgin reads repositories from pkgin/repositories.conf under pkgsrc's etc (e.g. /usr/pkg/etc); edit that file" ;;
     esac
 }
 
@@ -777,8 +988,10 @@ build() {
     REQ=""
     E=""
     LOCAL=""
+    OUTCOUNT=""   # outdated: awk pattern matching one outdated package
+    OUTNONE=0     # outdated: the native exit status that means "none"
     _verb=$1; shift
-    if needs_root "$_verb" && [ -n "$SUDO" ]; then
+    if needs_root "$_verb" $# && [ -n "$SUDO" ]; then
         E="$SUDO "
     fi
     # install: an operand with a package-file extension is a local file.
@@ -827,29 +1040,34 @@ build() {
 # pkx which / pkx help <command>
 # ---------------------------------------------------------------------------
 
-# show_rows [verb] — print the native mapping of every package verb (or of
-# just one), with placeholders for the operands.
+# show_rows — print the native mapping of every package command (or, with
+# WFILTER set, of just that one), with placeholders for the operands.
 show_rows() {
     NOQUOTE=1
-    for _row in install remove search info list list+pkg outdated refresh upgrade upgrade+pkg autoremove clean owns files raw; do
+    for _row in install remove purge search info list list+pkg outdated refresh \
+                upgrade upgrade+pkg autoremove orphans clean owns files deps rdeps \
+                hold hold+pkg unhold repo-list repo-add raw; do
+        _v=${_row%+pkg}
+        _key=${_v%-*}       # the command a row belongs to (repo-add -> repo)
         _label=$_row
         case $_row in
-            upgrade+pkg) _v=upgrade; _label="upgrade <pkg>"; set -- "<pkg>" ;;
-            list+pkg)    _v=list;    _label="list <pkg>";    set -- "<pkg>" ;;
-            owns)        _v=$_row; set -- "<file>" ;;
-            search)      _v=$_row; set -- "<term>" ;;
-            raw)         _v=$_row; _label="raw <args>"; set -- "<args>" ;;
-            install|remove|info|files) _v=$_row; set -- "<pkg>" ;;
-            *)           _v=$_row; set -- ;;
+            *+pkg)     _label="$_v <pkg>"; set -- "<pkg>" ;;
+            owns)      set -- "<file>" ;;
+            search)    set -- "<term>" ;;
+            raw)       _label="raw <args>"; set -- "<args>" ;;
+            repo-list) _label="repo list"; set -- ;;
+            repo-add)  _label="repo add <src>"; set -- "<source>" ;;
+            install|remove|purge|info|files|deps|rdeps|unhold) set -- "<pkg>" ;;
+            *)         set -- ;;
         esac
-        if [ -n "$WFILTER" ] && [ "$_v" != "$WFILTER" ]; then
+        if [ -n "$WFILTER" ] && [ "$_key" != "$WFILTER" ]; then
             continue
         fi
         build "$_v" "$@"
         if [ -n "$NATIVE" ]; then
-            printf '  %-13s %s\n' "$_label" "$NATIVE"
+            printf '  %-14s %s\n' "$_label" "$NATIVE"
         else
-            printf '  %-13s (not supported: %s)\n' "$_label" "$UNSUP"
+            printf '  %-14s (not supported: %s)\n' "$_label" "$UNSUP"
         fi
     done
     NOQUOTE=0
@@ -893,6 +1111,170 @@ verb_help() {
     else
         printf '\n(no supported package manager detected on this system)\n'
     fi
+}
+
+# ---------------------------------------------------------------------------
+# pkx completion bash|zsh|fish — generated from the same command table as
+# 'pkx help', so new commands and aliases complete without extra files.
+# ---------------------------------------------------------------------------
+
+COMPL_FLAGS="-y --yes -n --dry-run -q --quiet --via -h --help -V --version"
+
+# compl_pattern <verb> [separator] — the verb and its aliases, joined
+compl_pattern() {
+    verb_info "$1"
+    _p=$1
+    for _a in $VALIAS; do _p="$_p${2:-|}$_a"; done
+    printf '%s' "$_p"
+}
+
+# Commands whose operands are files (package files, owned paths)
+COMPL_FILE_VERBS="install owns"
+
+completion_bash() {
+    _files=""; for _v in $COMPL_FILE_VERBS; do _files="${_files:+$_files|}$(compl_pattern "$_v")"; done
+    cat <<EOF
+# bash completion for pkx (generated by 'pkx completion bash')
+# Load it with:  eval "\$(pkx completion bash)"
+_pkx() {
+    local cur prev cmd i
+    cur=\${COMP_WORDS[COMP_CWORD]}
+    prev=\${COMP_WORDS[COMP_CWORD-1]}
+    if [ "\$prev" = --via ]; then
+        COMPREPLY=(\$(compgen -W "$SUPPORTED_MGRS" -- "\$cur"))
+        return
+    fi
+    cmd=
+    for ((i = 1; i < COMP_CWORD; i++)); do
+        case \${COMP_WORDS[i]} in
+            --via) i=\$((i + 1)) ;;
+            -*) ;;
+            *) cmd=\${COMP_WORDS[i]}; break ;;
+        esac
+    done
+    if [ -z "\$cmd" ]; then
+        case \$cur in
+            -*) COMPREPLY=(\$(compgen -W "$COMPL_FLAGS" -- "\$cur")) ;;
+            *)  COMPREPLY=(\$(compgen -W "$ALL_VERBS" -- "\$cur")) ;;
+        esac
+        return
+    fi
+    case \$cmd in
+        $_files) ;;  # filenames, via -o default
+        $(compl_pattern help)|$(compl_pattern which))
+            COMPREPLY=(\$(compgen -W "$ALL_VERBS" -- "\$cur")) ;;
+        $(compl_pattern repo))
+            [ \$((i + 1)) -eq "\$COMP_CWORD" ] && COMPREPLY=(\$(compgen -W "list add" -- "\$cur")) ;;
+        completion)
+            COMPREPLY=(\$(compgen -W "bash zsh fish" -- "\$cur")) ;;
+    esac
+}
+complete -o default -F _pkx pkx
+EOF
+}
+
+# zsh/fish descriptions: escape for a single-quoted string (and ':' for
+# zsh's _describe)
+compl_desc() {
+    printf '%s' "$1" | sed -e "s/'/'\\\\''/g" -e "s/:/\\\\:/g"
+}
+
+completion_zsh() {
+    _files=""; for _v in $COMPL_FILE_VERBS; do _files="${_files:+$_files|}$(compl_pattern "$_v")"; done
+    cat <<EOF
+#compdef pkx
+# zsh completion for pkx (generated by 'pkx completion zsh')
+# Load it with:  eval "\$(pkx completion zsh)"   (after compinit)
+# or save it as _pkx in a directory on your \$fpath.
+_pkx() {
+    local -a cmds
+    local i cmd
+    cmds=(
+EOF
+    for _v in $ALL_VERBS; do
+        verb_info "$_v"
+        printf "        '%s:%s'\n" "$_v" "$(compl_desc "$VDESC")"
+    done
+    cat <<EOF
+    )
+    if [[ \${words[CURRENT-1]} == --via ]]; then
+        compadd -- $SUPPORTED_MGRS
+        return
+    fi
+    for (( i = 2; i < CURRENT; i++ )); do
+        case \${words[i]} in
+            --via) (( i++ )) ;;
+            -*) ;;
+            *) cmd=\${words[i]}; break ;;
+        esac
+    done
+    if [[ -z \$cmd ]]; then
+        if [[ \$PREFIX == -* ]]; then
+            compadd -- $COMPL_FLAGS
+        else
+            _describe -t commands 'pkx command' cmds
+        fi
+        return
+    fi
+    case \$cmd in
+        $_files) _files ;;
+        $(compl_pattern help)|$(compl_pattern which)) _describe -t commands 'pkx command' cmds ;;
+        $(compl_pattern repo)) (( CURRENT == i + 1 )) && compadd list add ;;
+        completion) compadd bash zsh fish ;;
+    esac
+}
+if [ "\$funcstack[1]" = "_pkx" ]; then
+    _pkx "\$@"
+else
+    compdef _pkx pkx
+fi
+EOF
+}
+
+completion_fish() {
+    cat <<'EOF'
+# fish completion for pkx (generated by 'pkx completion fish')
+# Load it with:  pkx completion fish | source
+# or save it as ~/.config/fish/completions/pkx.fish
+
+# The command word: the first argument that is not a flag (or --via's value).
+function __pkx_cmd
+    set -l toks (commandline -opc)
+    set -e toks[1]
+    while set -q toks[1]
+        switch $toks[1]
+            case --via
+                set -e toks[1]
+            case '-*'
+            case '*'
+                echo $toks[1]
+                return 0
+        end
+        set -e toks[1]
+    end
+    return 1
+end
+
+function __pkx_cmd_is
+    contains -- (__pkx_cmd) $argv
+end
+
+complete -c pkx -f
+complete -c pkx -s y -l yes -d 'Assume yes on prompts'
+complete -c pkx -s n -l dry-run -d 'Print the native command without running it'
+complete -c pkx -s q -l quiet -d 'Do not print the native command'
+complete -c pkx -s h -l help -d 'Show help'
+complete -c pkx -s V -l version -d 'Show version'
+EOF
+    printf "complete -c pkx -l via -x -a '%s' -d 'Force a manager'\n" "$SUPPORTED_MGRS"
+    for _v in $ALL_VERBS; do
+        verb_info "$_v"
+        printf "complete -c pkx -n 'not __pkx_cmd' -a %s -d '%s'\n" "$_v" "$(printf '%s' "$VDESC" | sed "s/'/\\\\'/g")"
+    done
+    printf "complete -c pkx -n '__pkx_cmd_is %s' -F\n" "$(for _v in $COMPL_FILE_VERBS; do compl_pattern "$_v" ' '; printf ' '; done)"
+    printf "complete -c pkx -n '__pkx_cmd_is %s %s' -a '%s'\n" "$(compl_pattern help ' ')" "$(compl_pattern which ' ')" "$ALL_VERBS"
+    printf "complete -c pkx -n '__pkx_cmd_is %s; and not __fish_seen_subcommand_from list add' -a 'list add'\n" "$(compl_pattern repo ' ')"
+    printf "complete -c pkx -n '__pkx_cmd_is completion' -a 'bash zsh fish'\n"
 }
 
 # ---------------------------------------------------------------------------
@@ -1043,9 +1425,27 @@ done
 
 case "$verb" in
     "") usage_err "missing command" ;;
-    install|remove|search|info|owns|files|raw)
+    install|remove|purge|search|info|owns|files|deps|rdeps|unhold|raw)
         [ $# -gt 0 ] || usage_err "'$verb' needs at least one argument" ;;
-    upgrade|list) ;;  # no operands = everything; operands = just those
+    upgrade|list|hold) ;;  # no operands = everything; operands = just those
+    repo)
+        # 'repo' and 'repo list' list; 'repo add <source> [name]' adds
+        case "${1:-list}" in
+            list|ls)
+                [ $# -le 1 ] || usage_err "'repo list' takes no arguments"
+                verb=repo-list; set -- ;;
+            add)
+                shift
+                [ $# -ge 1 ] && [ $# -le 2 ] || usage_err "usage: pkx repo add <source> [name]"
+                verb=repo-add ;;
+            *)  usage_err "unknown repo command '$1' (use 'repo list' or 'repo add')" ;;
+        esac ;;
+    completion)
+        [ $# -eq 1 ] || usage_err "usage: pkx completion bash|zsh|fish"
+        case "$1" in
+            bash|zsh|fish) ;;
+            *) usage_err "unknown shell '$1' (supported: bash, zsh, fish)" ;;
+        esac ;;
     which|help)
         [ $# -le 1 ] || usage_err "'$verb' takes at most one command"
         if [ $# -eq 1 ]; then
@@ -1054,7 +1454,7 @@ case "$verb" in
             [ -n "$CV" ] || usage_err "unknown command '$1'"
             set -- "$CV"
         fi ;;
-    refresh|outdated|autoremove|clean|version)
+    refresh|outdated|autoremove|orphans|clean|version)
         [ $# -eq 0 ] || usage_err "'$verb' takes no arguments" ;;
 esac
 
@@ -1064,6 +1464,9 @@ case "$verb" in
         exit 0 ;;
     version)
         print_version
+        exit 0 ;;
+    completion)
+        "completion_$1"
         exit 0 ;;
 esac
 
@@ -1112,13 +1515,21 @@ fi
 # helper tool (e.g. Gentoo qlist/qfile/eclean-dist) fail cleanly instead of
 # with a raw 127 after the teaching line has already printed.
 if ! has "$REQ"; then
-    warn "manager '$MGR' needs '$REQ', which is not installed"
+    warn "manager '$MGR' needs '$REQ'$(req_hint "$REQ"), which is not installed"
     exit 1
+fi
+
+# Without a terminal, a confirmation prompt reads end-of-file and the native
+# tool gives up -- and xbps even reports that as success (exit 0) having
+# changed nothing. So when the command can ask, require -y up front.
+if [ "$YES" = 0 ] && [ ! -t 0 ] && may_prompt "$verb" $#; then
+    warn "$MGR may ask for confirmation, but stdin is not a terminal; re-run with -y to answer yes"
+    exit 2
 fi
 
 # Termux is rootless by design (its apt installs into the app prefix), so
 # the no-root warning would cry wolf on every operation there.
-if needs_root "$verb" && [ "$ROOT" = 0 ] && [ -z "$SUDO" ] && [ -z "${TERMUX_VERSION:-}" ]; then
+if needs_root "$verb" $# && [ "$ROOT" = 0 ] && [ -z "$SUDO" ] && [ -z "${TERMUX_VERSION:-}" ]; then
     warn "warning: not running as root and no sudo/doas found; trying anyway"
 fi
 
@@ -1126,6 +1537,20 @@ fi
 # so escape sequences in an operand cannot repaint what the user reads.
 # Dry-run output stays byte-exact, since it may be consumed by scripts.
 [ "$QUIET" = 1 ] || printf 'pkx: running: %s\n' "$NATIVE" | tr -d '\000-\010\013-\037' >&2
+
+# outdated: exit 0 = up to date, 100 = upgrades available, anything else =
+# the native tool's error. Most tools exit 0 either way, so count the
+# outdated-package lines while passing the output through untouched.
+if [ -n "$OUTCOUNT" ]; then
+    exec 4>&1
+    _st=$( { { eval "$NATIVE"; echo "native $?" >&3; } |
+             awk "{ print; fflush() } $OUTCOUNT { n++ } END { exit n ? 100 : 0 }" >&4
+             echo "count $?" >&3; } 3>&1 )
+    _nrc=$(printf '%s\n' "$_st" | sed -n 's/^native //p')
+    _crc=$(printf '%s\n' "$_st" | sed -n 's/^count //p')
+    if [ "$_nrc" != 0 ] && [ "$_nrc" != "$OUTNONE" ]; then exit "$_nrc"; fi
+    exit "$_crc"
+fi
 
 eval "$NATIVE"
 exit $?
